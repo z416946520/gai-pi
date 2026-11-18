@@ -204,6 +204,10 @@ func build_top_bar() -> Control:
 	add_child(_dialogs)
 
 	_status_label = Label.new()
+	_status_label.clip_text = true
+	_status_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_status_label.custom_minimum_size = Vector2(0, 0)
+	_status_label.size_flags_horizontal = SIZE_SHRINK_END
 	_status_label.add_theme_font_override("font", Fonts.code())
 	_status_label.add_theme_font_size_override("font_size", Typography.body_small - 1)
 	_status_label.add_theme_color_override("font_color", Color("#ff8f8f"))
@@ -467,6 +471,16 @@ func on_workspace_ready() -> void:
 	_visuals_picker.selected = clampi(AppSetting.get_int(AppSetting.KEY_VISUAL, 0), 0, VisualStage.type_names().size() - 1)
 	refresh_sessions()
 	on_state_changed()
+	var fake_dialog := OS.get_environment("GAI_PI_FAKE_DIALOG").strip_edges()
+	if not fake_dialog.is_empty() and _dialogs != null:
+		_dialogs.request({
+			"id": "fake-dialog",
+			"method": fake_dialog,
+			"title": "Allow dangerous command?" if fake_dialog == "confirm" else "Pick a target",
+			"message": "pi wants to run: rm -rf build/",
+			"options": ["Allow once", "Allow for this session", "Block"],
+			"placeholder": "type a value…",
+		})
 	var open_session := OS.get_environment("GAI_PI_SESSION").strip_edges()
 	if not open_session.is_empty():
 		var target := open_session if FileAccess.file_exists(open_session) else PiSessionIndex.path_for_id(workspace_host.workspace, open_session)
@@ -627,10 +641,18 @@ func on_submit() -> void:
 ## Enter submits, Shift+Enter keeps the newline. Handled before GUI delivery so the
 ## TextEdit never sees the key and cannot insert a line break.
 func _input(event: InputEvent) -> void:
-	if _input_field == null or not _input_field.has_focus():
-		return
 	var key := event as InputEventKey
 	if key == null or not key.pressed or key.echo:
+		return
+	if _dialogs != null and _dialogs.is_open():
+		# A modal owns the keyboard: Escape cancels, Enter must not reach the composer.
+		if key.keycode == KEY_ESCAPE:
+			get_viewport().set_input_as_handled()
+			_dialogs.answer({"cancelled": true})
+		elif key.keycode == KEY_ENTER or key.keycode == KEY_KP_ENTER:
+			get_viewport().set_input_as_handled()
+		return
+	if _input_field == null or not _input_field.has_focus():
 		return
 	if key.keycode != KEY_ENTER and key.keycode != KEY_KP_ENTER:
 		return
@@ -850,7 +872,10 @@ func _poll_errors() -> void:
 func show_status(message: String) -> void:
 	if _status_label == null:
 		return
-	_status_label.text = message
+	var single_line := message.replace("
+", "  ")
+	_status_label.text = single_line if single_line.length() <= 72 else single_line.left(69) + "…"
+	_status_label.tooltip_text = message
 	_status_label.visible = not message.is_empty()
 	_status_shown_at = Time.get_ticks_msec()
 	if _sidebar_status != null and message.begins_with("pi "):

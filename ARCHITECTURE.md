@@ -237,9 +237,10 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 
 明确没做，避免误以为已经具备：
 
-- **扩展弹窗**：`extension_ui_request` 的 `select/confirm/input/editor` 目前一律回 `cancelled`，
-  只在里面过滤掉 `setStatus/setWidget/setTitle` 这些即发即忘的状态推送。这样扩展不会挂住，
-  但需要用户确认的扩展（审批、选择）在桌面上暂时无法交互。
+- **扩展状态栏**：`setStatus` / `setWidget` 这些即发即忘的推送还没有对应的状态条与挂件区，
+  目前丢弃。`notify` 会进顶栏提示（8 秒淡出）。
+- **弹窗队列**：`select/confirm/input/editor` 已能渲染并回写，但一次只显示一个，其余排队；
+  带 `timeout` 的请求到点自动按 `cancelled` 关闭（与 pi 的默认行为一致）。
 - **并发**：一个工作目录只有一个 pi 进程，所以同一项目的多个会话不能同时跑。
   跨项目可以（各开窗口/换工作目录）。
 - **检查点**：gai 的「每轮可回滚」还没接。pi 的 `fork/clone` 有，`edit` 自带 patch，
@@ -254,8 +255,9 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 ## 九、路线图（每步带验收）
 
 1. **协议稳固**（已完成）：启动/握手/流式/工具/结算，`test/bridge_smoke.gd` 通过。
-2. **扩展弹窗**：`confirm/select/input` 渲染为居中卡片，回写 `extension_ui_response`。
-   验收：装一个会 confirm 的扩展，点「允许/拒绝」后运行继续或中止。
+2. **扩展弹窗**（已完成）：`confirm/select/input/editor` 渲染为居中卡片，回写
+   `extension_ui_response`；`notify` 进顶栏。验收：`GAI_PI_FAKE_DIALOG=confirm|select|input`
+   起的假弹窗可渲染并回写（真扩展审批待补一个用例）。
 3. **检查点与回滚**：每次 `agent_start` 记 `git stash create`，气泡上给「恢复此文件/回滚此轮」。
    验收：让 pi 改两个文件，回滚后 `git status` 干净、内容逐字节一致。
 4. **会话管理补全**：重命名、删除、fork、pin，全部走 pi 命令 + 文件操作。

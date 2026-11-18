@@ -80,13 +80,15 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 | `GAI_PI_SMOKE_PROMPT=0` | 只验证启动，不调用模型 |
 | `GAI_PI_NODE` / `GAI_PI_CLI` | 覆盖 node / pi bundle 路径 |
 | `GAI_PI_SESSION` | 启动后打开指定会话（uuid 或 jsonl 路径） |
+| `GAI_PI_FAKE_DIALOG` | 起一个假扩展弹窗（`confirm`/`select`/`input`/`editor`），用于检查样式 |
 
 ## 现在能做什么，不能做什么
 
 已完成：启动握手、流式文本与思考、工具气泡（含 `edit` 内联 diff）、运行/停止、
-steer 队列、会话列表与切换、模型与 thinking 切换、上下文压缩事件、60 个视觉场景、多工作目录。
+steer 队列、会话列表与切换、模型与 thinking 切换、上下文压缩事件、扩展弹窗
+（`confirm`/`select`/`input`/`editor`）与 `notify`、60 个视觉场景、多工作目录。
 
-未完成（详见 [ARCHITECTURE.md](ARCHITECTURE.md#八边界与已知不足)）：扩展弹窗交互、
+未完成（详见 [ARCHITECTURE.md](ARCHITECTURE.md#八边界与已知不足)）：扩展状态栏/挂件、
 Git 检查点回滚、图片粘贴、编辑器面板、并发多会话、打包分发。
 
 ## 文档

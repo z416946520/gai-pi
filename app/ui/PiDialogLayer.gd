@@ -26,6 +26,10 @@ func _ready() -> void:
 	set_process(true)
 
 
+func is_open() -> bool:
+	return not _current.is_empty()
+
+
 ## Accepts an `extension_ui_request`; only dialog methods are rendered here.
 func request(data: Dictionary) -> void:
 	var method := str(data.get("method", StringUtils.EMPTY))
@@ -41,6 +45,8 @@ func open(data: Dictionary) -> void:
 	_current = data
 	visible = true
 	mouse_filter = MOUSE_FILTER_STOP
+	# The layer can be created before the window's first layout pass, so re-assert the rect.
+	set_anchors_and_offsets_preset(PRESET_FULL_RECT)
 	_build()
 	var timeout := int(data.get("timeout", 0))
 	_deadline_ms = 0 if timeout <= 0 else Time.get_ticks_msec() + timeout
@@ -51,9 +57,14 @@ func _build() -> void:
 		_overlay.queue_free()
 	_overlay = ColorRect.new()
 	_overlay.color = Color(0, 0, 0, 0.55)
-	_overlay.set_anchors_preset(PRESET_FULL_RECT)
+	_overlay.set_anchors_and_offsets_preset(PRESET_FULL_RECT)
 	_overlay.mouse_filter = MOUSE_FILTER_STOP
 	add_child(_overlay)
+
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(PRESET_FULL_RECT)
+	center.mouse_filter = MOUSE_FILTER_IGNORE
+	add_child(center)
 
 	_card = PanelContainer.new()
 	var style := StyleBoxFlat.new()
@@ -67,10 +78,7 @@ func _build() -> void:
 	style.content_margin_bottom = Margin.ma_4
 	_card.add_theme_stylebox_override("panel", style)
 	_card.custom_minimum_size = Vector2(520, 0)
-	_card.set_anchors_preset(PRESET_CENTER)
-	_card.grow_horizontal = GROW_DIRECTION_BOTH
-	_card.grow_vertical = GROW_DIRECTION_BOTH
-	add_child(_card)
+	center.add_child(_card)
 
 	_body = VBoxContainer.new()
 	_body.add_theme_constant_override("separation", Margin.ma_3)
@@ -117,6 +125,7 @@ func _build_select() -> void:
 		button.custom_minimum_size = Vector2(0, 34)
 		button.add_theme_font_override("font", Fonts.regular())
 		button.add_theme_font_size_override("font_size", Typography.body_medium)
+		style_button(button, false)
 		button.pressed.connect(func() -> void: answer({"value": option}))
 		_body.add_child(button)
 
@@ -129,13 +138,16 @@ func _build_input(multiline: bool) -> void:
 		_multiline.custom_minimum_size = Vector2(0, 160)
 		_multiline.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 		_multiline.add_theme_font_override("font", Fonts.code())
+		style_field(_multiline)
 		_body.add_child(_multiline)
+		_multiline.grab_focus()
 		return
 	_input = LineEdit.new()
 	_input.text = prefill
 	_input.placeholder_text = str(_current.get("placeholder", StringUtils.EMPTY))
 	_input.custom_minimum_size = Vector2(0, 34)
 	_input.add_theme_font_override("font", Fonts.regular())
+	style_field(_input)
 	_input.text_submitted.connect(func(_text: String) -> void: submit())
 	_body.add_child(_input)
 	_input.grab_focus()
@@ -149,6 +161,7 @@ func build_buttons(method: String) -> Control:
 	var cancel := Button.new()
 	cancel.text = "Cancel"
 	cancel.custom_minimum_size = Vector2(88, 32)
+	style_button(cancel, false)
 	cancel.pressed.connect(func() -> void: answer({"cancelled": true}))
 	row.add_child(cancel)
 
@@ -157,6 +170,7 @@ func build_buttons(method: String) -> Control:
 			var confirm := Button.new()
 			confirm.text = "Allow"
 			confirm.custom_minimum_size = Vector2(96, 32)
+			style_button(confirm, true)
 			confirm.pressed.connect(func() -> void: answer({"confirmed": true}))
 			row.add_child(confirm)
 		return row
@@ -164,6 +178,7 @@ func build_buttons(method: String) -> Control:
 	var submit_button := Button.new()
 	submit_button.text = "Submit"
 	submit_button.custom_minimum_size = Vector2(96, 32)
+	style_button(submit_button, true)
 	submit_button.pressed.connect(func() -> void: submit())
 	row.add_child(submit_button)
 	return row
@@ -182,9 +197,11 @@ func answer(payload: Dictionary) -> void:
 	_current = {}
 	visible = false
 	mouse_filter = MOUSE_FILTER_IGNORE
-	if _overlay != null:
-		_overlay.queue_free()
-		_overlay = null
+	for child in get_children():
+		child.queue_free()
+	_overlay = null
+	_card = null
+	_body = null
 	_input = null
 	_multiline = null
 	if not id.is_empty():
@@ -212,3 +229,38 @@ func _gui_input(event: InputEvent) -> void:
 	if key != null and key.pressed and key.keycode == KEY_ESCAPE:
 		accept_event()
 		answer({"cancelled": true})
+
+
+## Dark control styling so dialog fields and buttons sit in the same palette as the shell.
+func style_field(control: Control) -> void:
+	control.add_theme_color_override("font_color", ThemeColor.title_color)
+	control.add_theme_color_override("font_placeholder_color", ThemeColor.body_color.darkened(0.15))
+	control.add_theme_color_override("caret_color", ThemeColor.theme_color)
+	control.add_theme_color_override("font_selected_color", ThemeColor.title_color)
+	control.add_theme_color_override("selection_color", ThemeColor.selection_color)
+	for state: String in ["normal", "focus", "read_only"]:
+		var style := StyleBoxFlat.new()
+		style.bg_color = Colors.DARK_CONTROL_SURFACE
+		style.border_color = ThemeColor.theme_color if state == "focus" else Colors.DARK_OUTLINE_VARIANT
+		style.set_border_width_all(1)
+		style.set_corner_radius_all(8)
+		style.content_margin_left = Margin.ma_2
+		style.content_margin_right = Margin.ma_2
+		control.add_theme_stylebox_override(state, style)
+
+
+func style_button(button: Button, primary: bool) -> void:
+	button.add_theme_font_override("font", Fonts.medium())
+	button.add_theme_font_size_override("font_size", Typography.body_medium)
+	button.add_theme_color_override("font_color", Colors.DARK_BACKGROUND if primary else ThemeColor.title_color)
+	button.add_theme_color_override("font_hover_color", Colors.DARK_BACKGROUND if primary else ThemeColor.title_color)
+	for state: String in ["normal", "hover", "pressed"]:
+		var style := StyleBoxFlat.new()
+		if primary:
+			style.bg_color = ThemeColor.theme_color if state == "normal" else ThemeColor.theme_color.lightened(0.12)
+		else:
+			style.bg_color = Colors.DARK_CONTROL_SURFACE if state == "normal" else Colors.DARK_SURFACE_CONTAINER_HIGH
+		style.set_corner_radius_all(8)
+		style.content_margin_left = Margin.ma_3
+		style.content_margin_right = Margin.ma_3
+		button.add_theme_stylebox_override(state, style)
