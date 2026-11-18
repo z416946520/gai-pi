@@ -516,7 +516,9 @@
       "thinking": "Thinking level",
       "visual": "Agent visual",
       "language": "Language",
-      "usage": "ctx {}"
+      "usage": "ctx {}",
+      "toggle_light": "Switch to the light theme",
+      "toggle_dark": "Switch to the dark theme"
     },
     "language": {
       "code": "EN",

@@ -516,7 +516,9 @@
       "thinking": "思考等级",
       "visual": "代理视觉场景",
       "language": "界面语言",
-      "usage": "上下文 {}"
+      "usage": "上下文 {}",
+      "toggle_light": "切换到浅色主题",
+      "toggle_dark": "切换到深色主题"
     },
     "language": {
       "code": "中",

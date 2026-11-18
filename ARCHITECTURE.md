@@ -300,7 +300,22 @@ pi 没有检查点概念，用用户自己的仓库会往里塞 commit。gai-pi 
 - 两者都先过 `TextSanitize.strip_ansi()`（CSI/OSC 转义、回车）再接一行，否则 powerline 类扩展
   的彩色控制符会直接显示成乱码。
 
-## 十二、打包
+## 十二、主题
+
+调色板有两层：`zfoo` 的 `ThemeColor` 已经带深/浅两套派生色（标题、正文、卡片、强调），
+外壳又加了一层 `app/ui/AppTheme.gd`——它把背景、顶栏、侧栏、输入框、容器、描边这些
+“外壳色”统一映射到 `Colors.DARK_*` / `Colors.LIGHT_*`，并提供一个 `ink()` 把为深色画布
+设计的霓虹色（工具头、diff 的加/删行、错误红、检查点黄）在浅色下压暗 42%。
+
+主题切换的做法是**重建整个界面**：面板样式在构造时就把颜色写进了 `StyleBoxFlat`，逐处回写
+不如重建干净。重建时保留 `workspace_host` / `session`（pi 进程不重启）、输入框草稿、附件、
+编辑器开合状态与当前文件、滚动跟随，然后用 `start_transcript_build()` 把转录重放回来。
+实测从点击到新主题完整出现约一帧，首屏 50 条气泡重建 ~300ms。
+
+一个坑：重建会重新填充视觉选择器，某些构建下 `add_item` / `selected` 会触发 `item_selected`，
+于是看起来像“用户选了一个特效”。`_suppress_visual_signal` 在重建期间屏蔽该信号。
+
+## 十三、打包
 
 `tools/package.ps1` 不依赖 Godot 导出模板（那一套要另下 700MB 模板）：它把**引擎二进制、工程源、
 `.godot/` 导入缓存**拷到一个目录，再打 zip。包内保持仓库目录形状，所以 `gai-pi.cmd` 不用改。
@@ -308,7 +323,7 @@ pi 没有检查点概念，用用户自己的仓库会往里塞 commit。gai-pi 
 
 Node.js 与 pi 故意不打进包：它们用用户自己的安装、自己的 provider 凭据，这也符合整个项目的边界。
 
-## 十三、已验证的事实（可复跑）
+## 十四、已验证的事实（可复跑）
 
 ```bash
 # 1. GoDot 能驱动 pi 的 RPC（协议往返）
@@ -342,7 +357,7 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 
 ---
 
-## 十四、边界与已知不足
+## 十五、边界与已知不足
 
 明确没做，避免误以为已经具备：
 
@@ -356,7 +371,8 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 - **图片输入的边界**：只接图片，不接音频/视频；剪贴板里同时有文字和图片时优先进文字。
 - **聊天记录搜索**：只做了会话级过滤，气泡内容搜索未做。
 - **编辑器**：只读预览，没有标签页、没有写操作、没有语法高亮。
-- **主题切换**：目前只有深色；`ThemeColor` 支持浅色，但界面没有入口。
+- **主题切换的代价**：重建界面会丢掉未提交的瞬时状态（正在预览的特效、未发送的弹窗）；
+  主题选择本身持久化在 `Setting` 里。
 - **并发多会话**：一个工作目录一个 pi 进程，同时只能跑一个会话。
 - **附件/图片、粘贴截图**：已支持图片，尚无文件附件与音频。
 - **编辑器面板、语音、资产技能面板、演练场（workflow）**：只补了文件浏览与只读预览，其余未移植。
@@ -364,7 +380,7 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 
 ---
 
-## 十五、路线图（每步带验收）
+## 十六、路线图（每步带验收）
 
 1. **协议稳固**（已完成）：启动/握手/流式/工具/结算，`test/bridge_smoke.gd` 通过。
 2. **性能基线**（已完成）：切换 565 条会话 = pi 的 `switch_session` ~0.5s + 读文件重建
@@ -377,12 +393,15 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 6. **图片输入**（已完成）：粘贴/拖拽 → base64 → `prompt.images`，`GAI_PI_ATTACH_IMAGE`
    验收钩子能直接挂图并发给模型。
 7. **打包**（已完成）：`tools/package.ps1` 产出便携目录与 zip，包内引擎可启动、可截图。
-8. **编辑器增强**：标签页、语法高亮、diff 视图、写操作。
-9. **导出单文件 exe**：装 Godot 导出模板后加 `export_presets.cfg`。
+8. **主题**（已完成）：`AppTheme` 映射外壳色，右上角深/浅切换，重建界面但保留会话与草稿。
+9. **编辑器增强**：标签页、语法高亮、diff 视图、写操作。
+10. **并发会话**：同一工作目录跑两个 pi 进程，侧栏角标显示运行中。
+11. **聊天内容搜索**：跨气泡检索并滚动定位。
+12. **导出单文件 exe**：装 Godot 导出模板后加 `export_presets.cfg`。
 
 ---
 
-## 十六、目录
+## 十七、目录
 
 ```
 app/

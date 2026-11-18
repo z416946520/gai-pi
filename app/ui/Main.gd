@@ -59,6 +59,7 @@ var _hint_label: Label = null
 var _workspace_dialog: FileDialog = null
 var _language_button: Button = null
 var _editor_button: Button = null
+var _theme_button: Button = null
 var _editor: EditorPanel = null
 var _attachments: Array[Dictionary] = []
 var _attachment_row: HBoxContainer = null
@@ -69,6 +70,8 @@ var _strip_status_label: Label = null
 var _extension_status: Dictionary[String, String] = {}
 var _extension_widgets: Dictionary[String, PackedStringArray] = {}
 var _last_usage: OpenAiUsage = null
+## Rebuilding the picker must not look like a user selection (some builds emit item_selected).
+var _suppress_visual_signal: bool = false
 var _sidebar_failed: bool = false
 var _build_queue: Array[ChatEntry] = []
 var _build_generation: int = 0
@@ -84,6 +87,7 @@ var _checkpoints: CheckpointManager = null
 var _turn_start_commit: String = StringUtils.EMPTY
 var _turn_entry: ChatEntry = null
 var _turn_index: int = 0
+var _switch_theme_at: int = 0
 var _preview_visual_at: int = 0
 var _preview_visual_type: int = -1
 var _switch_locale_at: int = 0
@@ -102,8 +106,15 @@ func _ready() -> void:
 	_init_i18n()
 	apply_locale_override()
 	ThemeColor.load_theme()
+	# GAI_PI_THEME forces the palette before the first build.
+	var theme_env := OS.get_environment("GAI_PI_THEME").strip_edges()
+	if theme_env == "light":
+		ThemeColor.set_theme(ThemeColor.ThemeEnum.LIGHT)
+	elif theme_env == "dark":
+		ThemeColor.set_theme(ThemeColor.ThemeEnum.DARK)
 	build_ui()
 	gdf.events.locale_changed.connect(apply_locale)
+	gdf.events.theme_changed.connect(on_theme_changed)
 	PiEvents.events.agent_end.connect(on_agent_end_checkpoint)
 	open_workspace(_initial_workspace())
 	var visual_override := OS.get_environment("GAI_PI_VISUAL").strip_edges()
@@ -135,6 +146,12 @@ func _ready() -> void:
 	if not switch_env.is_empty():
 		_switch_locale_code = switch_env
 		_switch_locale_at = _started_at + 2500
+	var switch_theme := OS.get_environment("GAI_PI_SWITCH_THEME").strip_edges()
+	if not switch_theme.is_empty():
+		var delay := 2500
+		if switch_theme.is_valid_int():
+			delay = int(switch_theme) * 1000
+		_switch_theme_at = _started_at + delay
 	_screenshot_target = OS.get_environment("GAI_PI_SCREENSHOT").strip_edges()
 	_screenshot_at = _started_at + int(OS.get_environment("GAI_PI_SCREENSHOT_DELAY").to_int() if not OS.get_environment("GAI_PI_SCREENSHOT_DELAY").is_empty() else 6000)
 
@@ -151,6 +168,9 @@ func _process(_delta: float) -> void:
 	if not _build_queue.is_empty():
 		build_next_batch()
 	watch_scroll_extent()
+	if _switch_theme_at > 0 and now >= _switch_theme_at:
+		_switch_theme_at = 0
+		ThemeColor.toggle_theme()
 	if _preview_visual_at > 0 and now >= _preview_visual_at:
 		_preview_visual_at = 0
 		if _visual_stage != null:
@@ -170,7 +190,10 @@ func _process(_delta: float) -> void:
 func _capture_screenshot() -> void:
 	var target := _screenshot_target
 	_screenshot_target = StringUtils.EMPTY
-	await RenderingServer.frame_post_draw
+	# Two frames are enough for layout and drawing to settle; frame_post_draw can stall when
+	# the window is occluded, which would hang the verification run.
+	await get_tree().process_frame
+	await get_tree().process_frame
 	var image := get_viewport().get_texture().get_image()
 	var error := image.save_png(target)
 	print("[gai-pi] screenshot ", target, " error=", error)
@@ -195,7 +218,7 @@ func _exit_tree() -> void:
 
 func build_ui() -> void:
 	var background := ColorRect.new()
-	background.color = Colors.DARK_BACKGROUND
+	background.color = AppTheme.background() 
 	background.set_anchors_preset(PRESET_FULL_RECT)
 	background.mouse_filter = MOUSE_FILTER_IGNORE
 	add_child(background)
@@ -226,8 +249,8 @@ func build_top_bar() -> Control:
 	_top_bar = PanelContainer.new()
 	_top_bar.custom_minimum_size = Vector2(0, TOP_BAR_HEIGHT)
 	var style := StyleBoxFlat.new()
-	style.bg_color = Colors.DARK_DEEP_SURFACE
-	style.border_color = Colors.DARK_OUTLINE_VARIANT
+	style.bg_color = AppTheme.deep_surface() 
+	style.border_color = AppTheme.outline() 
 	style.border_width_bottom = 1
 	style.content_margin_left = Margin.ma_4
 	style.content_margin_right = Margin.ma_4
@@ -273,16 +296,25 @@ func build_top_bar() -> Control:
 	_visuals_picker.focus_mode = FOCUS_NONE
 	_visuals_picker.add_theme_font_override("font", Fonts.regular())
 	_visuals_picker.add_theme_font_size_override("font_size", Typography.body_small)
+	_visuals_picker.add_theme_color_override("font_color", ThemeColor.body_color)
+	_visuals_picker.add_theme_color_override("font_hover_color", ThemeColor.title_color)
+	_visuals_picker.add_theme_color_override("font_focus_color", ThemeColor.title_color)
 
+	_suppress_visual_signal = true
 	for index in VisualStage.type_names().size():
 		_visuals_picker.add_item(VisualStage.localized_name(index), index)
 	_visuals_picker.selected = clampi(AppSetting.get_int(AppSetting.KEY_VISUAL, 0), 0, VisualStage.type_names().size() - 1)
 	_visuals_picker.item_selected.connect(on_visual_selected)
+	_suppress_visual_signal = false
 	row.add_child(_visuals_picker)
 
 	_editor_button = make_flat_button("", "")
 	_editor_button.pressed.connect(func() -> void: toggle_editor(not _editor.visible))
 	row.add_child(_editor_button)
+
+	_theme_button = make_flat_button("", "")
+	_theme_button.pressed.connect(func() -> void: ThemeColor.toggle_theme())
+	row.add_child(_theme_button)
 
 	_language_button = make_flat_button("", "")
 	_language_button.pressed.connect(on_language_pressed)
@@ -299,7 +331,7 @@ func build_top_bar() -> Control:
 	_status_label.size_flags_horizontal = SIZE_SHRINK_END
 	_status_label.add_theme_font_override("font", Fonts.code())
 	_status_label.add_theme_font_size_override("font_size", Typography.body_small - 1)
-	_status_label.add_theme_color_override("font_color", Color("#ff8f8f"))
+	_status_label.add_theme_color_override("font_color", AppTheme.ink(Color("#ff8f8f")))
 	_status_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_status_label.visible = false
 	row.add_child(_status_label)
@@ -319,8 +351,8 @@ func build_sidebar() -> Control:
 	panel.custom_minimum_size = Vector2(SIDEBAR_MIN_WIDTH, 0)
 	panel.size_flags_horizontal = SIZE_FILL
 	var style := StyleBoxFlat.new()
-	style.bg_color = Colors.DARK_CHROME_SURFACE
-	style.border_color = Colors.DARK_OUTLINE_VARIANT
+	style.bg_color = AppTheme.chrome_surface() 
+	style.border_color = AppTheme.outline() 
 	style.border_width_right = 1
 	style.content_margin_left = Margin.ma_3
 	style.content_margin_right = Margin.ma_3
@@ -411,8 +443,8 @@ func build_chat_area() -> Control:
 	_load_earlier_button.add_theme_font_size_override("font_size", Typography.body_small)
 	_load_earlier_button.add_theme_color_override("font_color", ThemeColor.title_color)
 	var pill := StyleBoxFlat.new()
-	pill.bg_color = Color(Colors.DARK_CONTROL_SURFACE, 0.92)
-	pill.border_color = Colors.DARK_OUTLINE_VARIANT
+	pill.bg_color = Color(AppTheme.control_surface(), 0.92)
+	pill.border_color = AppTheme.outline() 
 	pill.set_border_width_all(1)
 	pill.set_corner_radius_all(15)
 	pill.content_margin_left = Margin.ma_3
@@ -436,7 +468,7 @@ func build_chat_area() -> Control:
 	_runtime_strip.mouse_filter = MOUSE_FILTER_IGNORE
 	_runtime_strip.visible = false
 	var strip_style := StyleBoxFlat.new()
-	strip_style.bg_color = Color(Colors.DARK_CONTROL_SURFACE, 0.86)
+	strip_style.bg_color = Color(AppTheme.control_surface(), 0.86)
 	strip_style.set_corner_radius_all(8)
 	strip_style.content_margin_left = Margin.ma_2
 	strip_style.content_margin_right = Margin.ma_2
@@ -489,8 +521,8 @@ func build_composer() -> Control:
 	_composer.offset_bottom = -Margin.ma_4
 	_composer.mouse_filter = MOUSE_FILTER_PASS
 	var style := StyleBoxFlat.new()
-	style.bg_color = Colors.DARK_CONTROL_SURFACE
-	style.border_color = Colors.DARK_OUTLINE_VARIANT
+	style.bg_color = AppTheme.control_surface() 
+	style.border_color = AppTheme.outline() 
 	style.set_border_width_all(1)
 	style.set_corner_radius_all(12)
 	style.content_margin_left = Margin.ma_3
@@ -516,6 +548,7 @@ func build_composer() -> Control:
 	_input_field.add_theme_font_override("font", Fonts.regular())
 	_input_field.add_theme_font_size_override("font_size", Typography.body_large)
 	_input_field.add_theme_color_override("font_color", ThemeColor.title_color)
+	_input_field.add_theme_color_override("font_placeholder_color", ThemeColor.body_color.darkened(0.1))
 	_input_field.add_theme_color_override("caret_color", ThemeColor.theme_color)
 	var flat_edit := StyleBoxEmpty.new()
 	_input_field.add_theme_stylebox_override("normal", flat_edit)
@@ -537,7 +570,7 @@ func build_composer() -> Control:
 	row.add_child(_hint_label)
 
 	_stop_button = make_flat_button(T.t("gai_pi.composer.stop"), T.t("gai_pi.composer.stop_tooltip"))
-	_stop_button.add_theme_color_override("font_color", Color("#ff8f8f"))
+	_stop_button.add_theme_color_override("font_color", AppTheme.ink(Color("#ff8f8f")))
 	_stop_button.pressed.connect(on_stop_pressed)
 	_stop_button.visible = false
 	row.add_child(_stop_button)
@@ -547,8 +580,8 @@ func build_composer() -> Control:
 	_send_button.add_theme_font_override("font", Fonts.semibold())
 	_send_button.add_theme_font_size_override("font_size", Typography.body_medium)
 	_send_button.custom_minimum_size = Vector2(84, 30)
-	_send_button.add_theme_color_override("font_color", Colors.DARK_BACKGROUND)
-	_send_button.add_theme_color_override("font_hover_color", Colors.DARK_BACKGROUND)
+	_send_button.add_theme_color_override("font_color", AppTheme.background())
+	_send_button.add_theme_color_override("font_hover_color", AppTheme.background())
 	for state: String in ["normal", "hover", "pressed"]:
 		var button_style := StyleBoxFlat.new()
 		button_style.bg_color = ThemeColor.theme_color if state == "normal" else ThemeColor.theme_color.lightened(0.12)
@@ -640,9 +673,9 @@ func on_notification(message: String, level: String) -> void:
 	if _status_label == null:
 		return
 	if level == "error":
-		_status_label.add_theme_color_override("font_color", Color("#ff8f8f"))
+		_status_label.add_theme_color_override("font_color", AppTheme.ink(Color("#ff8f8f")))
 	elif level == "warning":
-		_status_label.add_theme_color_override("font_color", Color("#ffd479"))
+		_status_label.add_theme_color_override("font_color", AppTheme.ink(Color("#ffd479")))
 	else:
 		_status_label.add_theme_color_override("font_color", ThemeColor.body_color)
 	show_status(message)
@@ -1025,6 +1058,8 @@ func on_workspace_selected(path: String) -> void:
 
 
 func on_visual_selected(index: int) -> void:
+	if _suppress_visual_signal:
+		return
 	if _visual_stage == null:
 		AppSetting.set_int(AppSetting.KEY_VISUAL, index)
 		return
@@ -1265,8 +1300,8 @@ func style_sidebar_field(control: LineEdit) -> void:
 	control.add_theme_color_override("caret_color", ThemeColor.theme_color)
 	for state: String in ["normal", "focus", "read_only"]:
 		var style := StyleBoxFlat.new()
-		style.bg_color = Colors.DARK_CONTROL_SURFACE
-		style.border_color = ThemeColor.theme_color if state == "focus" else Colors.DARK_OUTLINE_VARIANT
+		style.bg_color = AppTheme.control_surface() 
+		style.border_color = ThemeColor.theme_color if state == "focus" else AppTheme.outline() 
 		style.set_border_width_all(1)
 		style.set_corner_radius_all(8)
 		style.content_margin_left = Margin.ma_2
@@ -1284,7 +1319,7 @@ func build_session_row(meta: Dictionary, is_active: bool, pinned: bool = false) 
 	button.size_flags_horizontal = SIZE_EXPAND_FILL
 	button.mouse_filter = MOUSE_FILTER_STOP
 	var style := StyleBoxFlat.new()
-	style.bg_color = ThemeColor.mix_with_theme_color(Colors.DARK_CONTROL_SURFACE, 0.35) if is_active else Color(0, 0, 0, 0)
+	style.bg_color = ThemeColor.mix_with_theme_color(AppTheme.control_surface(), 0.35) if is_active else Color(0, 0, 0, 0)
 	style.set_corner_radius_all(8)
 	style.content_margin_left = Margin.ma_2
 	style.content_margin_right = Margin.ma_2
@@ -1414,6 +1449,47 @@ func on_revert_entry(entry: ChatEntry) -> void:
 
 
 # ---------------------------------------------------------------------------
+# Theme
+# ---------------------------------------------------------------------------
+
+## Panel styles are built with concrete colors, so a theme change rebuilds the shell.
+## The pi process and the session survive: only the widgets are disposable.
+func on_theme_changed() -> void:
+	rebuild_ui_for_theme()
+
+
+func rebuild_ui_for_theme() -> void:
+	var draft := _input_field.text if _input_field != null else StringUtils.EMPTY
+	var attachments := _attachments.duplicate()
+	var editor_open := _editor != null and _editor.visible
+	var editor_file := _editor.current_file() if editor_open else StringUtils.EMPTY
+	_bubbles.clear()
+	_dirty_bubbles.clear()
+	_build_queue.clear()
+	_build_generation += 1
+	_sessions_signature = StringUtils.EMPTY
+	# Remove before freeing so the old shell cannot draw over the new one for a frame.
+	for child in get_children():
+		remove_child(child)
+		child.queue_free()
+	build_ui()
+	_prompt = ModalPrompt.new()
+	add_child(_prompt)
+	_attachments = attachments
+	apply_locale()
+	if not attachments.is_empty():
+		rebuild_attachment_row()
+	rebuild_runtime_strip()
+	if session != null:
+		start_transcript_build(session.entries)
+	_input_field.text = draft
+	if editor_open:
+		toggle_editor(true)
+		if not editor_file.is_empty():
+			_editor.show_file(editor_file)
+
+
+# ---------------------------------------------------------------------------
 # Editor
 # ---------------------------------------------------------------------------
 
@@ -1479,7 +1555,7 @@ func rebuild_attachment_row() -> void:
 	for index in _attachments.size():
 		var chip := PanelContainer.new()
 		var chip_style := StyleBoxFlat.new()
-		chip_style.bg_color = Colors.DARK_SURFACE_CONTAINER
+		chip_style.bg_color = AppTheme.container_surface() 
 		chip_style.set_corner_radius_all(6)
 		chip_style.content_margin_left = Margin.ma_1
 		chip_style.content_margin_right = Margin.ma_1
@@ -1597,11 +1673,15 @@ func apply_locale() -> void:
 	if _workspace_button == null:
 		return
 	_workspace_button.tooltip_text = T.t("gai_pi.topbar.switch_workspace")
+	if workspace_host != null:
+		_workspace_button.text = _short_path(workspace_host.workspace)
 	_model_button.tooltip_text = T.t("gai_pi.topbar.choose_model")
 	_thinking_button.tooltip_text = T.t("gai_pi.topbar.thinking")
 	_visuals_picker.tooltip_text = T.t("gai_pi.topbar.visual")
 	_editor_button.text = T.t("gai_pi.editor.toggle")
 	_editor_button.tooltip_text = T.t("gai_pi.editor.toggle_tooltip")
+	_theme_button.text = "☀" if AppTheme.is_dark() else "☾"
+	_theme_button.tooltip_text = T.t("gai_pi.topbar.toggle_light") if AppTheme.is_dark() else T.t("gai_pi.topbar.toggle_dark")
 	if _editor != null:
 		_editor.apply_locale()
 	_language_button.text = T.t("gai_pi.language.code")
@@ -1638,10 +1718,12 @@ func refresh_visual_picker() -> void:
 	if _visuals_picker == null:
 		return
 	var selected := _visuals_picker.selected
+	_suppress_visual_signal = true
 	_visuals_picker.clear()
 	for index in VisualStage.type_names().size():
 		_visuals_picker.add_item(VisualStage.localized_name(index), index)
 	_visuals_picker.selected = clampi(selected, 0, VisualStage.type_names().size() - 1)
+	_suppress_visual_signal = false
 
 
 func thinking_label(level: String) -> String:

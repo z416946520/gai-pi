@@ -28,6 +28,11 @@ var _current_path: String = StringUtils.EMPTY
 var _items_added: int = 0
 
 
+## Path currently shown in the preview, or "" when nothing is open.
+func current_file() -> String:
+	return _current_path
+
+
 func is_built() -> bool:
 	return _tree != null
 
@@ -42,8 +47,8 @@ func setup(workspace_path: String) -> void:
 	workspace = workspace_path
 	set_anchors_and_offsets_preset(PRESET_FULL_RECT)
 	var style := StyleBoxFlat.new()
-	style.bg_color = Colors.DARK_CHROME_SURFACE
-	style.border_color = Colors.DARK_OUTLINE_VARIANT
+	style.bg_color = AppTheme.chrome_surface() 
+	style.border_color = AppTheme.outline() 
 	style.border_width_left = 1
 	style.content_margin_left = Margin.ma_2
 	style.content_margin_right = Margin.ma_2

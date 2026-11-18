@@ -62,7 +62,7 @@ func _build(title: String, message: String) -> void:
 
 	_card = PanelContainer.new()
 	var style := StyleBoxFlat.new()
-	style.bg_color = Colors.DARK_SURFACE_CONTAINER
+	style.bg_color = AppTheme.container_surface() 
 	style.border_color = ThemeColor.theme_color
 	style.set_border_width_all(1)
 	style.set_corner_radius_all(12)
@@ -167,8 +167,8 @@ func _style_field(control: Control) -> void:
 	control.add_theme_color_override("caret_color", ThemeColor.theme_color)
 	for state: String in ["normal", "focus", "read_only"]:
 		var style := StyleBoxFlat.new()
-		style.bg_color = Colors.DARK_CONTROL_SURFACE
-		style.border_color = ThemeColor.theme_color if state == "focus" else Colors.DARK_OUTLINE_VARIANT
+		style.bg_color = AppTheme.control_surface() 
+		style.border_color = ThemeColor.theme_color if state == "focus" else AppTheme.outline() 
 		style.set_border_width_all(1)
 		style.set_corner_radius_all(8)
 		style.content_margin_left = Margin.ma_2
@@ -187,7 +187,7 @@ func _style_button(button: Button, primary: bool, destructive: bool = false) -> 
 		if primary:
 			style.bg_color = accent if state == "normal" else accent.lightened(0.12)
 		else:
-			style.bg_color = Colors.DARK_CONTROL_SURFACE if state == "normal" else Colors.DARK_SURFACE_CONTAINER_HIGH
+			style.bg_color = AppTheme.control_surface()  if state == "normal" else AppTheme.container_high() 
 		style.set_corner_radius_all(8)
 		style.content_margin_left = Margin.ma_3
 		style.content_margin_right = Margin.ma_3

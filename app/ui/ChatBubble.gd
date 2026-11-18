@@ -127,7 +127,7 @@ func _build() -> void:
 	_restore_button.add_theme_font_override("font", Fonts.code())
 	_restore_button.add_theme_font_size_override("font_size", Typography.body_small - 1)
 	_restore_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	_restore_button.add_theme_color_override("font_color", Color("#ffd479"))
+	_restore_button.add_theme_color_override("font_color", AppTheme.ink(Color("#ffd479")))
 	_restore_button.visible = false
 	_restore_button.pressed.connect(func() -> void: restore_requested.emit(entry))
 	column.add_child(_restore_button)
@@ -138,7 +138,7 @@ func _build() -> void:
 	_revert_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_revert_button.add_theme_font_override("font", Fonts.code())
 	_revert_button.add_theme_font_size_override("font_size", Typography.body_small - 1)
-	_revert_button.add_theme_color_override("font_color", Color("#ffd479"))
+	_revert_button.add_theme_color_override("font_color", AppTheme.ink(Color("#ffd479")))
 	_revert_button.visible = false
 	_revert_button.pressed.connect(func() -> void: revert_requested.emit(entry))
 	column.add_child(_revert_button)
@@ -150,7 +150,7 @@ func _build() -> void:
 	background.bg_color = ThemeColor.card_surface
 	background.set_corner_radius_all(10)
 	background.set_content_margin_all(0)
-	background.border_color = Colors.DARK_OUTLINE_VARIANT
+	background.border_color = AppTheme.outline() 
 	background.set_border_width_all(0)
 	add_theme_stylebox_override("panel", background)
 
@@ -352,13 +352,13 @@ static func accent_for_kind(kind: String) -> Color:
 		ChatEntry.KIND_USER:
 			return ThemeColor.theme_color
 		ChatEntry.KIND_ERROR:
-			return Color("#ff8f8f")
+			return AppTheme.ink(Color("#ff8f8f"))
 		ChatEntry.KIND_THINKING:
-			return Color("#b49bff")
+			return AppTheme.ink(Color("#b49bff"))
 		ChatEntry.KIND_TOOL, ChatEntry.KIND_FILE_TOOL, ChatEntry.KIND_EXPLORER_TOOL, ChatEntry.KIND_WEB_TOOL:
-			return Color("#7fd4ff")
+			return AppTheme.ink(Color("#7fd4ff"))
 		ChatEntry.KIND_COMPACTION, ChatEntry.KIND_CHECKPOINT:
-			return Color("#ffd479")
+			return AppTheme.ink(Color("#ffd479"))
 		_:
 			return ThemeColor.title_color
 
@@ -393,11 +393,11 @@ static func diff_bbcode(diff: String) -> String:
 	for line in diff.split("\n"):
 		var escaped := escape_bbcode(line)
 		if line.begins_with("+"):
-			output.append("[color=%s]%s[/color]" % [COLOR_ADDED.to_html(false), escaped])
+			output.append("[color=%s]%s[/color]" % [AppTheme.ink(COLOR_ADDED).to_html(false), escaped])
 		elif line.begins_with("-"):
-			output.append("[color=%s]%s[/color]" % [COLOR_REMOVED.to_html(false), escaped])
+			output.append("[color=%s]%s[/color]" % [AppTheme.ink(COLOR_REMOVED).to_html(false), escaped])
 		elif line.begins_with("@"):
-			output.append("[color=%s]%s[/color]" % [ThemeColor.theme_color.to_html(false), escaped])
+			output.append("[color=%s]%s[/color]" % [AppTheme.ink(ThemeColor.theme_color).to_html(false), escaped])
 		else:
-			output.append("[color=%s]%s[/color]" % [COLOR_CONTEXT.to_html(false), escaped])
+			output.append("[color=%s]%s[/color]" % [AppTheme.ink(COLOR_CONTEXT).to_html(false), escaped])
 	return "\n".join(output)
