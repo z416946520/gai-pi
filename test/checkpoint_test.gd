@@ -40,6 +40,12 @@ func _initialize() -> void:
 				print("[ckpt] FAIL diff list")
 				quit(1)
 				return
+			manager.file_diff(commit, "a.txt", func(diff: String) -> void:
+				print("[ckpt] diff has change=", diff.contains("+changed by the turn"))
+				if not diff.contains("+changed by the turn"):
+					print("[ckpt] FAIL file_diff")
+					quit(1)
+			)
 			phase = "revert"
 			manager.revert_turn(turn, commit, func(ok: bool) -> void:
 				print("[ckpt] revert ok=", ok)

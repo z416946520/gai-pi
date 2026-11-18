@@ -63,7 +63,13 @@ func setup(workspace_path: String) -> bool:
 	enabled = true
 	ready.emit()
 	# Baseline so the first turn diffs against a real commit.
-	enqueue_commit("baseline", func(_ok: bool, _commit: String) -> void: pass)
+	enqueue_commit("baseline", func(ok: bool, commit: String) -> void:
+		if ok:
+			var file := FileAccess.open(_repo_dir.path_join("baseline.txt"), FileAccess.WRITE)
+			if file != null:
+				file.store_string(commit)
+				file.close()
+	)
 	return true
 
 
@@ -276,6 +282,45 @@ func _write_records(records: Array) -> void:
 		return
 	file.store_string(JSON.stringify(records, "  "))
 	file.close()
+
+
+## Commit that opened the most recent turn of this session, or "" when none exists.
+func latest_start_commit(session_id: String) -> String:
+	var best_turn := -1
+	var best_commit := StringUtils.EMPTY
+	for record_value in _read_records():
+		var record := PiSession.as_dictionary(record_value)
+		if str(record.get("session", StringUtils.EMPTY)) != session_id:
+			continue
+		var turn := int(record.get("turn", -1))
+		if turn > best_turn:
+			best_turn = turn
+			best_commit = str(record.get("commit", StringUtils.EMPTY))
+	return best_commit
+
+
+func baseline_commit() -> String:
+	if _repo_dir.is_empty():
+		return StringUtils.EMPTY
+	var file := FileAccess.open(_repo_dir.path_join("baseline.txt"), FileAccess.READ)
+	if file == null:
+		return StringUtils.EMPTY
+	var text := file.get_as_text().strip_edges()
+	file.close()
+	return text
+
+
+## Unified diff of one workspace-relative path against a commit.
+func file_diff(base_commit: String, path: String, callback: Callable) -> void:
+	if not enabled or base_commit.is_empty() or path.is_empty():
+		callback.call(StringUtils.EMPTY)
+		return
+	_enqueue(func(done: Callable) -> void:
+		run_git(PackedStringArray(["--no-pager", "diff", "--no-color", base_commit, "--", path]), func(_code: int, output: String) -> void:
+			callback.call(output)
+			done.call()
+		)
+	)
 
 
 func format_file_list(files: Array) -> String:

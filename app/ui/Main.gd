@@ -98,6 +98,7 @@ var _active_key: String = StringUtils.EMPTY
 var _local_id_seq: int = 0
 var _new_session_seq: int = 0
 var _boot_hooks_done: bool = false
+var _pending_editor_diff: bool = false
 var _session_search: LineEdit = null
 var _prompt: ModalPrompt = null
 var _pinned_paths: Array[String] = []
@@ -146,6 +147,9 @@ func _ready() -> void:
 		# Multiple files are separated by "|" so tab switching can be exercised.
 		for file in editor_file.split("|", false):
 			_editor.show_file(file)
+		if OS.get_environment("GAI_PI_EDITOR_DIFF") == "1":
+			# The checkpoint lookup needs a live session, which arrives with the host.
+			_pending_editor_diff = true
 	get_window().files_dropped.connect(on_files_dropped)
 	get_window().title = "gai-pi"
 	_input_field.grab_focus()
@@ -274,6 +278,7 @@ func build_ui() -> void:
 	_editor.visible = false
 	_editor.closed.connect(func() -> void: toggle_editor(false))
 	_editor.reference_requested.connect(on_editor_reference)
+	_editor.diff_requested.connect(on_editor_diff)
 	body.add_child(_editor)
 
 
@@ -892,6 +897,7 @@ func on_host_ready(key: String) -> void:
 		run_boot_hooks()
 	else:
 		update_empty_state()
+	maybe_show_pending_diff()
 
 
 func run_boot_hooks() -> void:
@@ -940,6 +946,7 @@ func on_host_loaded(key: String, loaded: PiSession) -> void:
 		_sidebar_status.text = StringUtils.EMPTY
 	start_transcript_build(loaded.entries)
 	refresh_sessions(true)
+	maybe_show_pending_diff()
 	if not _pending_delete.is_empty() and loaded.path != _pending_delete:
 		var stale := _pending_delete
 		_pending_delete = StringUtils.EMPTY
@@ -1886,6 +1893,37 @@ func toggle_editor(show_editor: bool) -> void:
 	_editor.visible = show_editor
 	if show_editor and _editor.is_built():
 		_editor.reload()
+
+
+## Shows what the last turn changed in this file, against its opening checkpoint.
+func maybe_show_pending_diff() -> void:
+	if not _pending_editor_diff or _editor == null or not _editor.visible:
+		return
+	# Wait for the host that owns the checkpoint records: a fresh session has no path yet.
+	if session == null or session.path.is_empty() or _checkpoints == null or not _checkpoints.enabled:
+		return
+	var file := _editor.current_file()
+	if file.is_empty():
+		return
+	_pending_editor_diff = false
+	on_editor_diff(file)
+
+
+func on_editor_diff(path: String) -> void:
+	if _editor == null or _checkpoints == null or not _checkpoints.enabled or session == null:
+		return
+	var base := _checkpoints.latest_start_commit(session.pi_id)
+	if base.is_empty():
+		base = _checkpoints.baseline_commit()
+	if base.is_empty():
+		_editor.show_diff_notice(T.t("gai_pi.editor.no_checkpoint"))
+		return
+	var relative := path.replace("\\", "/")
+	if relative.begins_with(_workspace_path.replace("\\", "/") + "/"):
+		relative = relative.substr(_workspace_path.replace("\\", "/").length() + 1)
+	_checkpoints.file_diff(base, relative, func(text: String) -> void:
+		_editor.show_diff(path, text)
+	)
 
 
 func on_editor_reference(path: String) -> void:

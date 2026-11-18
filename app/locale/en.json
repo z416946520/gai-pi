@@ -650,7 +650,10 @@
       "too_large": "File is too large to preview",
       "unreadable": "Cannot read this file",
       "empty": "Empty file",
-      "reference_short": "Mention"
+      "reference_short": "Mention",
+      "diff": "Diff against the last checkpoint",
+      "no_changes": "No changes since the last checkpoint",
+      "no_checkpoint": "No checkpoint for this session yet"
     },
     "search": {
       "button": "Search this chat (Ctrl+F)",

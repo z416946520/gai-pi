@@ -289,6 +289,8 @@ pi 没有检查点概念，用用户自己的仓库会往里塞 commit。gai-pi 
   按后缀分派 GDScript/JSON/Markdown/Windows/通用，`CodeColors` 随主题切换），只在
   `MarkdownHighlighter` 里把 `@mention` 扫描换成同逻辑的 `MentionScan`。
 - **引用**：点「引用」把 `@相对路径` 追加到输入框，交给 pi 的 `@path` 展开。
+- **Diff**：标题栏 `Δ` 把当前文件与「本会话最近一次检查点的开局提交」做 `git diff`，
+  按行着色；没有记录时退回仓库 baseline，再没有就提示「还没有检查点」。
 
 只读是刻意的：写文件归 pi，外壳不跟它抢，避免同一份文件两个写入者。
 
@@ -422,7 +424,7 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 7. **打包**（已完成）：`tools/package.ps1` 产出便携目录与 zip，包内引擎可启动、可截图。
 8. **主题**（已完成）：`AppTheme` 映射外壳色，右上角深/浅切换，重建界面但保留会话与草稿。
 9. **聊天内容搜索**（已完成）：纯函数匹配 + 浮层结果 + 跳转高亮，远端命中重建窗口。
-10. **编辑器增强**（部分完成）：标签页与语法高亮已接；diff 视图、写操作、文件内搜索待做。
+10. **编辑器增强**（部分完成）：标签页、语法高亮、diff 视图已接；写操作、文件内搜索待做。
 11. **并发会话**（已完成）：一会话一进程，`test/concurrency_test.gd` 同时跑两个 prompt
     都能拿到各自回答；侧栏 `●` 标运行中，池子上限 4。
 12. **导出单文件 exe**：装 Godot 导出模板后加 `export_presets.cfg`。

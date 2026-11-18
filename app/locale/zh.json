@@ -650,7 +650,10 @@
       "too_large": "文件太大，不预览",
       "unreadable": "读不了这个文件",
       "empty": "空文件",
-      "reference_short": "引用"
+      "reference_short": "引用",
+      "diff": "对比上一个检查点",
+      "no_changes": "自上个检查点以来没有改动",
+      "no_checkpoint": "这个会话还没有检查点"
     },
     "search": {
       "button": "搜索聊天记录（Ctrl+F）",

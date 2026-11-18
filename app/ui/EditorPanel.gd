@@ -7,6 +7,7 @@ extends PanelContainer
 ## images, and plain text are covered; binary files get a size notice instead of garbage.
 
 signal reference_requested(path: String)
+signal diff_requested(path: String)
 signal closed
 
 const EXCLUDED_DIRS := [".git", ".godot", ".dependency", ".verify", "node_modules", "__pycache__"]
@@ -95,6 +96,12 @@ func _build() -> void:
 	_title.add_theme_color_override("font_color", ThemeColor.title_color)
 	header.add_child(_title)
 
+	var diff := tool_button("Δ", T.t("gai_pi.editor.diff"))
+	diff.pressed.connect(func() -> void:
+		if not _current_path.is_empty():
+			diff_requested.emit(_current_path)
+	)
+	header.add_child(diff)
 	var refresh := tool_button("⟳", T.t("gai_pi.editor.refresh"))
 	refresh.pressed.connect(reload)
 	header.add_child(refresh)
@@ -420,6 +427,34 @@ func _add_notice(text: String) -> void:
 func _clear_preview() -> void:
 	for child in _preview_host.get_children():
 		child.queue_free()
+
+
+## Shows a one-line notice in the preview area, used for missing checkpoints.
+func show_diff_notice(text: String) -> void:
+	_clear_preview()
+	_add_notice(text)
+
+
+## Renders a unified diff for the current file (empty text means no changes).
+func show_diff(path: String, text: String) -> void:
+	_current_path = path
+	if _reference_button != null:
+		_reference_button.visible = true
+	_clear_preview()
+	var body := text.strip_edges()
+	if body.is_empty():
+		_add_notice(T.t("gai_pi.editor.no_changes"))
+		return
+	var label := RichTextLabel.new()
+	label.bbcode_enabled = true
+	label.fit_content = true
+	label.selection_enabled = true
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.size_flags_horizontal = SIZE_EXPAND_FILL
+	label.add_theme_font_override("normal_font", Fonts.code())
+	label.add_theme_font_size_override("normal_font_size", Typography.body_small - 1)
+	label.text = ChatBubble.diff_bbcode(body)
+	_preview_host.add_child(label)
 
 
 ## Re-applies translated labels after a language switch.
