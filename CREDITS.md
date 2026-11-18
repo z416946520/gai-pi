@@ -40,7 +40,7 @@ SOFTWARE.
 | `app/markdown/MarkdownParser.gd`、`MarkdownParseResult.gd` | gai `agent/markdown/` | 未改动 |
 | `app/bridge/ChatEntry.gd` | gai `agent/manager/session/ChatEntry.gd` | 增加 `id/tool_name/tool_call_id/is_error/running` 字段；移除依赖 gai 弹窗的 `open_full_view` 实现 |
 | `app/bridge/AgentToolResult.gd` | gai `agent/tools/AgentToolResult.gd` | 未改动 |
-| `app/locale/zh.json`、`en.json` | gai `agent/config/locale/` | 未改动 |
+| `app/locale/zh.json`、`en.json` | gai `agent/config/locale/` | 新增 `gai_pi.*` 词条（桌面端全量文案），保留原 `agent.*` 等词条供视觉场景使用 |
 | `zfoo/ui/font/*.woff2` | gai（随 zfoo） | 未改动；字体授权见 `zfoo/ui/font/OFL.txt` |
 
 兼容壳（`AgentLayout`、`AgentSetting`、`ToolHelper`、`LlamaHelper`、`VLMServer`、`SessionRow`）

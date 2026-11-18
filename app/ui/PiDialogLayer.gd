@@ -52,9 +52,25 @@ func open(data: Dictionary) -> void:
 	_deadline_ms = 0 if timeout <= 0 else Time.get_ticks_msec() + timeout
 
 
+## Re-renders the open dialog, used when the interface language changes.
+func rebuild() -> void:
+	if _current.is_empty():
+		return
+	_build()
+
+
+func _clear() -> void:
+	for child in get_children():
+		child.queue_free()
+	_overlay = null
+	_card = null
+	_body = null
+	_input = null
+	_multiline = null
+
+
 func _build() -> void:
-	if _overlay != null:
-		_overlay.queue_free()
+	_clear()
 	_overlay = ColorRect.new()
 	_overlay.color = Color(0, 0, 0, 0.55)
 	_overlay.set_anchors_and_offsets_preset(PRESET_FULL_RECT)
@@ -85,7 +101,7 @@ func _build() -> void:
 	_card.add_child(_body)
 
 	var title := Label.new()
-	title.text = str(_current.get("title", "pi"))
+	title.text = str(_current.get("title", T.t("gai_pi.dialog.default_title")))
 	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	title.add_theme_font_override("font", Fonts.semibold())
 	title.add_theme_font_size_override("font_size", Typography.title_medium)
@@ -159,7 +175,7 @@ func build_buttons(method: String) -> Control:
 	row.add_theme_constant_override("separation", Margin.ma_2)
 
 	var cancel := Button.new()
-	cancel.text = "Cancel"
+	cancel.text = T.t("common.cancel")
 	cancel.custom_minimum_size = Vector2(88, 32)
 	style_button(cancel, false)
 	cancel.pressed.connect(func() -> void: answer({"cancelled": true}))
@@ -168,7 +184,7 @@ func build_buttons(method: String) -> Control:
 	if method == "select" or method == "confirm":
 		if method == "confirm":
 			var confirm := Button.new()
-			confirm.text = "Allow"
+			confirm.text = T.t("gai_pi.dialog.allow")
 			confirm.custom_minimum_size = Vector2(96, 32)
 			style_button(confirm, true)
 			confirm.pressed.connect(func() -> void: answer({"confirmed": true}))
@@ -176,7 +192,7 @@ func build_buttons(method: String) -> Control:
 		return row
 
 	var submit_button := Button.new()
-	submit_button.text = "Submit"
+	submit_button.text = T.t("gai_pi.dialog.submit")
 	submit_button.custom_minimum_size = Vector2(96, 32)
 	style_button(submit_button, true)
 	submit_button.pressed.connect(func() -> void: submit())
@@ -197,13 +213,7 @@ func answer(payload: Dictionary) -> void:
 	_current = {}
 	visible = false
 	mouse_filter = MOUSE_FILTER_IGNORE
-	for child in get_children():
-		child.queue_free()
-	_overlay = null
-	_card = null
-	_body = null
-	_input = null
-	_multiline = null
+	_clear()
 	if not id.is_empty():
 		answered.emit(id, payload)
 	_next()

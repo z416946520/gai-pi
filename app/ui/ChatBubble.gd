@@ -134,22 +134,43 @@ func refresh() -> void:
 
 
 func header_text() -> String:
-	if entry.kind == ChatEntry.KIND_USER:
-		return "You"
+	var localized := localized_title()
+	if not localized.is_empty():
+		var summary := str(entry.details.get("summary", StringUtils.EMPTY))
+		return localized if summary.is_empty() else "%s  %s" % [localized, summary]
 	var summary := str(entry.details.get("summary", StringUtils.EMPTY))
 	if not summary.is_empty():
 		return "%s  %s" % [entry.title, summary]
 	return entry.title
 
 
+## Titles owned by the shell are translated at render time so a language switch updates them.
+func localized_title() -> String:
+	match entry.kind:
+		ChatEntry.KIND_USER:
+			return T.t("gai_pi.bubble.you")
+		ChatEntry.KIND_AGENT:
+			return T.t("gai_pi.bubble.agent")
+		ChatEntry.KIND_THINKING:
+			return T.t("gai_pi.bubble.thinking")
+		ChatEntry.KIND_ERROR:
+			return T.t("gai_pi.bubble.error")
+		ChatEntry.KIND_COMPACTION:
+			return T.t("gai_pi.bubble.compaction")
+		ChatEntry.KIND_SYSTEM:
+			return T.t("gai_pi.bubble.system")
+		_:
+			return StringUtils.EMPTY
+
+
 func meta_text() -> String:
 	if entry.running:
-		return "running"
+		return T.t("gai_pi.bubble.running")
 	if entry.is_error:
-		return "failed"
+		return T.t("gai_pi.bubble.failed")
 	if entry.kind == ChatEntry.KIND_TOOL or entry.kind == ChatEntry.KIND_FILE_TOOL or entry.kind == ChatEntry.KIND_EXPLORER_TOOL or entry.kind == ChatEntry.KIND_WEB_TOOL:
 		var lines := entry.body.count("\n") + 1
-		return "" if entry.body.is_empty() else "%d lines" % lines
+		return StringUtils.EMPTY if entry.body.is_empty() else T.t("gai_pi.bubble.lines", [lines])
 	return StringUtils.EMPTY
 
 
@@ -192,7 +213,7 @@ func update_expand_button(total_lines: int) -> void:
 		_expand_button.visible = false
 		return
 	_expand_button.visible = true
-	_expand_button.text = "collapse" if expanded else "%d more lines" % (total_lines - limit)
+	_expand_button.text = T.t("gai_pi.bubble.collapse") if expanded else T.t("gai_pi.bubble.more", [total_lines - limit])
 
 
 func apply_background(is_user: bool, accent: Color) -> void:

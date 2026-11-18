@@ -507,5 +507,94 @@
     "pipeline": {
       "stopped": "Workflow stopped"
     }
+  },
+  "gai_pi": {
+    "project": "project",
+    "topbar": {
+      "switch_workspace": "Switch workspace",
+      "choose_model": "Choose model",
+      "thinking": "Thinking level",
+      "visual": "Agent visual",
+      "language": "Language",
+      "usage": "ctx {}"
+    },
+    "language": {
+      "code": "EN",
+      "zh": "简体中文",
+      "en": "English"
+    },
+    "sidebar": {
+      "new": "＋  New session",
+      "untitled": "New session",
+      "empty": "No sessions yet",
+      "starting": "starting pi…"
+    },
+    "composer": {
+      "placeholder": "Ask pi to read, change, or verify something…",
+      "hint": "Enter sends · Shift+Enter newline",
+      "send": "Send",
+      "steer": "Steer",
+      "stop": "■ Stop",
+      "stop_tooltip": "Abort the run"
+    },
+    "empty": {
+      "subtitle": "pi is loaded here — ask it to read, change, or verify this workspace."
+    },
+    "bubble": {
+      "you": "You",
+      "agent": "Agent",
+      "thinking": "Thinking",
+      "error": "Error",
+      "compaction": "Context summary",
+      "system": "System",
+      "running": "running",
+      "failed": "failed",
+      "lines": "{} lines",
+      "more": "{} more lines",
+      "collapse": "collapse",
+      "session": "Session"
+    },
+    "status": {
+      "switch_while_running": "Stop the running turn before switching sessions",
+      "new_while_running": "Stop the running turn before starting a new session",
+      "models_failed": "Could not list models"
+    },
+    "dialog": {
+      "allow": "Allow",
+      "submit": "Submit",
+      "default_title": "pi"
+    },
+    "thinking": {
+      "off": "Off",
+      "minimal": "Minimal",
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "xhigh": "XHigh",
+      "max": "Max"
+    },
+    "bridge": {
+      "launcher_failed": "Could not write the pi launcher script",
+      "start_failed": "Could not start pi. Check the Node.js runtime path in Settings.",
+      "not_running": "pi is not running",
+      "new_session_failed": "Could not start a new session",
+      "switch_failed": "Could not switch sessions",
+      "switch_cancelled": "Session switch was cancelled by an extension",
+      "prompt_rejected": "Prompt rejected",
+      "abort_failed": "Could not abort the run",
+      "compact_failed": "Compaction failed",
+      "model_failed": "Could not switch models",
+      "thinking_failed": "Could not change the thinking level",
+      "exited": "pi exited",
+      "no_answer": "pi did not answer in time",
+      "did_not_start": "pi did not start: {}",
+      "cli_missing": "pi CLI bundle not found. Install it with: npm i -g @earendil-works/pi-coding-agent",
+      "node_missing": "Node.js runtime not found. Install Node.js 20+ or set the runtime path in Settings."
+    },
+    "chat": {
+      "retrying": "Retrying ({}/{}): {}",
+      "retry_failed": "Retry failed: {}",
+      "compact_failed": "Compaction failed"
+    }
   }
 }

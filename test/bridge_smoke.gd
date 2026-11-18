@@ -74,7 +74,7 @@ func try_switch() -> void:
 		var path := str(meta.get("path", ""))
 		if path == host.session.path:
 			continue
-		if str(meta.get("title", "")) == "New session":
+		if str(meta.get("title", "")).is_empty():
 			continue
 		target = path
 		print("[smoke] switching to ", path.get_file(), " title=", meta.get("title", ""))

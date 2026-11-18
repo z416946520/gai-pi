@@ -16,6 +16,8 @@ const ENV_SESSION_DIR := "PI_CODING_AGENT_SESSION_DIR"
 static var node_bin: String = StringUtils.EMPTY
 static var cli_js: String = StringUtils.EMPTY
 static var error_message: String = StringUtils.EMPTY
+## Machine-readable reason for [member error_message]; the UI maps it to a translated message.
+static var error_code: String = StringUtils.EMPTY
 
 
 ## Resolves the runtime pair; returns false and fills [member error_message] when unavailable.
@@ -25,6 +27,7 @@ static func resolve(force: bool = false) -> bool:
 	node_bin = StringUtils.EMPTY
 	cli_js = StringUtils.EMPTY
 	error_message = StringUtils.EMPTY
+	error_code = StringUtils.EMPTY
 
 	cli_js = _first_existing([
 		AppSetting.get_string(AppSetting.KEY_PI_CLI),
@@ -37,6 +40,7 @@ static func resolve(force: bool = false) -> bool:
 				cli_js = candidate
 				break
 	if cli_js.is_empty():
+		error_code = "cli_missing"
 		error_message = "pi CLI bundle not found; install it with: npm i -g @earendil-works/pi-coding-agent"
 		return false
 
@@ -50,6 +54,7 @@ static func resolve(force: bool = false) -> bool:
 		# An npm install next to the launcher usually ships its own node on Windows.
 		node_bin = _first_existing([cli_js.get_base_dir().path_join("node.exe")])
 	if node_bin.is_empty():
+		error_code = "node_missing"
 		error_message = "Node.js runtime not found; install Node.js 20+ or set the runtime path in Settings"
 		return false
 	return true

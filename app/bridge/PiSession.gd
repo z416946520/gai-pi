@@ -69,10 +69,10 @@ func handle_event(data: Dictionary) -> void:
 		"compaction_end":
 			on_compaction_end(data)
 		"auto_retry_start":
-			add_error_entry("Retrying (%d/%d): %s" % [int(data.get("attempt", 0)), int(data.get("maxAttempts", 0)), str(data.get("errorMessage", ""))])
+			add_error_entry(T.t("gai_pi.chat.retrying", [int(data.get("attempt", 0)), int(data.get("maxAttempts", 0)), str(data.get("errorMessage", ""))]))
 		"auto_retry_end":
 			if not bool(data.get("success", true)):
-				add_error_entry("Retry failed: " + str(data.get("finalError", "unknown")))
+				add_error_entry(T.t("gai_pi.chat.retry_failed", [str(data.get("finalError", "unknown"))]))
 		_:
 			pass
 
@@ -278,7 +278,7 @@ func on_compaction_end(data: Dictionary) -> void:
 	var result: Dictionary = as_dictionary(data.get("result", {}))
 	entry.body = str(result.get("summary", StringUtils.EMPTY))
 	if entry.body.is_empty():
-		entry.body = str(data.get("errorMessage", "Compaction failed"))
+		entry.body = str(data.get("errorMessage", T.t("gai_pi.chat.compact_failed")))
 	entry_updated.emit(entry, "content")
 
 

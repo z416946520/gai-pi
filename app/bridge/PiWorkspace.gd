@@ -49,10 +49,10 @@ func start() -> bool:
 	if client != null:
 		return is_ready
 	if not PiPaths.resolve():
-		failed.emit(PiPaths.error_message)
+		failed.emit(localized_start_error())
 		return false
 	if not _write_launcher():
-		failed.emit("Could not write the pi launcher script")
+		failed.emit(T.t("gai_pi.bridge.launcher_failed"))
 		return false
 	client = PiClient.new()
 	client.event.connect(on_event)
@@ -61,7 +61,7 @@ func start() -> bool:
 	var binary := "cmd.exe" if OSUtils.is_windows() else "/bin/sh"
 	var arguments := PackedStringArray(["/c", _launcher_path]) if OSUtils.is_windows() else PackedStringArray([_launcher_path])
 	if not client.start(binary, arguments):
-		failed.emit("Could not start pi. Check the Node.js runtime path in Settings.")
+		failed.emit(T.t("gai_pi.bridge.start_failed"))
 		client = null
 		return false
 	# pi buffers stdin while it boots, so the first probe can go out immediately.
@@ -80,7 +80,7 @@ func poll() -> void:
 	if now - _boot_started_at > BOOT_TIMEOUT_MS:
 		var detail := client.stderr_tail(400) if client != null else StringUtils.EMPTY
 		stop()
-		failed.emit("pi did not answer get_state in 45s" if detail.is_empty() else "pi did not start: " + detail)
+		failed.emit(T.t("gai_pi.bridge.no_answer") if detail.is_empty() else T.t("gai_pi.bridge.did_not_start", [detail]))
 		return
 	if now - _state_requested_at > 3000:
 		request_state()
@@ -116,7 +116,7 @@ func new_session() -> void:
 		return
 	var on_result := func(result: Dictionary) -> void:
 		if not bool(result.get("success", false)):
-			report_error(str(result.get("error", "new_session failed")))
+			report_error(str(result.get("error", T.t("gai_pi.bridge.new_session_failed"))))
 			return
 		_needs_entries = true
 		request_state()
@@ -128,11 +128,11 @@ func switch_session(session_path: String) -> void:
 		return
 	var on_result := func(result: Dictionary) -> void:
 		if not bool(result.get("success", false)):
-			report_error(str(result.get("error", "switch_session failed")))
+			report_error(str(result.get("error", T.t("gai_pi.bridge.switch_failed"))))
 			return
 		var data := PiSession.as_dictionary(result.get("data", {}))
 		if bool(data.get("cancelled", false)):
-			report_error("Session switch was cancelled by an extension")
+			report_error(T.t("gai_pi.bridge.switch_cancelled"))
 			return
 		_needs_entries = true
 		if session != null:
@@ -154,7 +154,7 @@ func prompt(text: String, behavior: String = StringUtils.EMPTY) -> void:
 		params["streamingBehavior"] = behavior
 	var on_result := func(result: Dictionary) -> void:
 		if not bool(result.get("success", false)):
-			var message := str(result.get("error", "prompt rejected"))
+			var message := str(result.get("error", T.t("gai_pi.bridge.prompt_rejected")))
 			report_error(message)
 			session.add_error_entry(message)
 			return
@@ -168,7 +168,7 @@ func abort() -> void:
 		return
 	var on_result := func(result: Dictionary) -> void:
 		if not bool(result.get("success", false)):
-			report_error(str(result.get("error", "abort failed")))
+			report_error(str(result.get("error", T.t("gai_pi.bridge.abort_failed"))))
 	client.request("abort", {}, on_result)
 
 
@@ -177,7 +177,7 @@ func compact() -> void:
 		return
 	var on_result := func(result: Dictionary) -> void:
 		if not bool(result.get("success", false)):
-			report_error(str(result.get("error", "compaction failed")))
+			report_error(str(result.get("error", T.t("gai_pi.bridge.compact_failed"))))
 	client.request("compact", {}, on_result, COMPACT_TIMEOUT_MS)
 
 
@@ -186,7 +186,7 @@ func set_model(model_id: String) -> void:
 		return
 	var on_result := func(result: Dictionary) -> void:
 		if not bool(result.get("success", false)):
-			report_error(str(result.get("error", "set_model failed")))
+			report_error(str(result.get("error", T.t("gai_pi.bridge.model_failed"))))
 			return
 		request_state()
 	client.request("set_model", {"model": model_id}, on_result)
@@ -197,7 +197,7 @@ func set_thinking_level(level: String) -> void:
 		return
 	var on_result := func(result: Dictionary) -> void:
 		if not bool(result.get("success", false)):
-			report_error(str(result.get("error", "set_thinking_level failed")))
+			report_error(str(result.get("error", T.t("gai_pi.bridge.thinking_failed"))))
 			return
 		thinking_level = level
 		state_changed.emit()
@@ -319,13 +319,20 @@ func on_closed(_exit_code: int) -> void:
 		session.running = false
 		RuntimeManager.end(session.local_id)
 	var detail := client.stderr_tail(400) if client != null else StringUtils.EMPTY
-	failed.emit("pi exited" if detail.is_empty() else "pi exited: " + detail)
+	failed.emit(T.t("gai_pi.bridge.exited") if detail.is_empty() else T.t("gai_pi.bridge.exited") + ": " + detail)
+
+
+## Maps a missing runtime to a translated message; raw diagnostics stay in [PiPaths].
+func localized_start_error() -> String:
+	if PiPaths.error_code == "cli_missing":
+		return T.t("gai_pi.bridge.cli_missing")
+	return T.t("gai_pi.bridge.node_missing")
 
 
 func ensure_client() -> bool:
 	if client != null and client.is_running():
 		return true
-	report_error("pi is not running")
+	report_error(T.t("gai_pi.bridge.not_running"))
 	return false
 
 

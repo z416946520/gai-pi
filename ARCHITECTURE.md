@@ -202,7 +202,44 @@ pi 的 8 个内置工具与 gai 的 18 个不是一一对应，映射集中在 `
 
 ---
 
-## 七、已验证的事实（可复跑）
+## 七、界面语言
+
+界面文字只有两个来源：
+
+1. **gai 的现成词条**：`agent.visuals.*`、`agent.toolbar.visual_*` 等，60 个视觉场景与视觉选择器
+   直接用，`app/locale/zh.json` / `en.json` 原样保留。
+2. **gai-pi 自己的词条**：全部放在两份语言文件的 `gai_pi.*` 下（`app/locale/*.json`，嵌套 JSON，
+   `LocaleData` 会拍平成点号键）。`app/ui/T.gd` 负责查表与 `{}` 占位符替换，缺词条时回退成键名，
+   不会静默变空。
+
+切换流程：
+
+```
+点右上角 中/EN
+  → I18n.set_locale("res://app/locale/<code>.json")   // 加载词典、set_locale、写 Setting
+  → gdf.events.locale_changed
+  → Main.apply_locale()
+       顶栏 tooltip / 语言按钮 / 发送与停止按钮 / 输入框占位 / 快捷键提示
+       视觉选择器重建（60 项走 VisualStage.localized_name）
+       侧栏重建（未命名会话用 gai_pi.sidebar.untitled）
+       空状态重建
+       所有气泡 refresh()（标题按 kind 现算，不存英文常量）
+       打开中的扩展弹窗 rebuild()
+```
+
+设计上的取舍：
+
+- **气泡标题在渲染时翻译**：`ChatEntry.title` 建于事件发生那一刻，若直接显示会冻结语言；
+  `ChatBubble.localized_title()` 按 `kind` 现查词条，只有工具名（`read`/`bash`/`edit`…）保留原文，
+  因为它们是 pi 的工具标识。
+- **pi 的输出不翻译**：模型文本、工具输出、pi 报的原始错误都是数据；只有桥接层自己生成的
+  提示（启动失败、切换失败、重试中…）走词条。
+- **持久化交给 zfoo**：`I18n.set_locale` 把 locale 写进 `Setting`，下次启动 `_init_i18n()` 读回，
+  没有第二份配置。
+- **热切换的代价**：一次切换会重建侧栏、重排全部气泡（400 条会话约 1 秒）。可接受，因为切换是
+  低频动作；滚动位置由 `watch_scroll_extent` + 跟随窗口保持在底部，不会被重建打断。
+
+## 八、已验证的事实（可复跑）
 
 ```bash
 # 1. GoDot 能驱动 pi 的 RPC（协议往返）
@@ -212,7 +249,10 @@ pi 的 8 个内置工具与 gai 的 18 个不是一一对应，映射集中在 `
 # 2. 不调用模型，只验证启动与会话加载
 GAI_PI_SMOKE_PROMPT=0 ... --script test/bridge_smoke.gd
 
-# 3. 界面截图（自检钩子）
+# 3. 两种语言 + 热切换（自检钩子）
+GAI_PI_LOCALE=zh GAI_PI_SWITCH_LOCALE=en GAI_PI_SCREENSHOT=.verify/lang.png   .dependency/godot/Godot_v4.6.3-stable_win64_console.exe --path .
+
+# 4. 界面截图（自检钩子）
 GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 \
   .dependency/godot/Godot_v4.6.3-stable_win64_console.exe --path .
 ```
@@ -233,7 +273,7 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 
 ---
 
-## 八、边界与已知不足
+## 九、边界与已知不足
 
 明确没做，避免误以为已经具备：
 
@@ -252,7 +292,7 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 
 ---
 
-## 九、路线图（每步带验收）
+## 十、路线图（每步带验收）
 
 1. **协议稳固**（已完成）：启动/握手/流式/工具/结算，`test/bridge_smoke.gd` 通过。
 2. **扩展弹窗**（已完成）：`confirm/select/input/editor` 渲染为居中卡片，回写
@@ -269,7 +309,7 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 
 ---
 
-## 十、目录
+## 十一、目录
 
 ```
 app/

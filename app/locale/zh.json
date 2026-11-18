@@ -507,5 +507,94 @@
     "pipeline": {
       "stopped": "工作流已停止"
     }
+  },
+  "gai_pi": {
+    "project": "项目",
+    "topbar": {
+      "switch_workspace": "切换工作目录",
+      "choose_model": "选择模型",
+      "thinking": "思考等级",
+      "visual": "代理视觉场景",
+      "language": "界面语言",
+      "usage": "上下文 {}"
+    },
+    "language": {
+      "code": "中",
+      "zh": "简体中文",
+      "en": "English"
+    },
+    "sidebar": {
+      "new": "＋  新会话",
+      "untitled": "新会话",
+      "empty": "还没有会话",
+      "starting": "正在启动 pi…"
+    },
+    "composer": {
+      "placeholder": "让 pi 读代码、改代码，或者跑一遍验证…",
+      "hint": "Enter 发送 · Shift+Enter 换行",
+      "send": "发送",
+      "steer": "插话",
+      "stop": "■ 停止",
+      "stop_tooltip": "中止本轮运行"
+    },
+    "empty": {
+      "subtitle": "pi 已在这个工作目录待命，让它读、改、验证都行。"
+    },
+    "bubble": {
+      "you": "你",
+      "agent": "助手",
+      "thinking": "思考",
+      "error": "错误",
+      "compaction": "上下文摘要",
+      "system": "系统",
+      "running": "运行中",
+      "failed": "失败",
+      "lines": "{} 行",
+      "more": "还有 {} 行",
+      "collapse": "收起",
+      "session": "会话"
+    },
+    "status": {
+      "switch_while_running": "先停止本轮运行，再切换会话",
+      "new_while_running": "先停止本轮运行，再新建会话",
+      "models_failed": "拿不到模型列表"
+    },
+    "dialog": {
+      "allow": "允许",
+      "submit": "提交",
+      "default_title": "pi"
+    },
+    "thinking": {
+      "off": "关闭",
+      "minimal": "最低",
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "xhigh": "最高",
+      "max": "极限"
+    },
+    "bridge": {
+      "launcher_failed": "写不了 pi 的启动脚本",
+      "start_failed": "启动 pi 失败，请检查设置里的 Node.js 路径",
+      "not_running": "pi 没在运行",
+      "new_session_failed": "新建会话失败",
+      "switch_failed": "切换会话失败",
+      "switch_cancelled": "会话切换被扩展取消",
+      "prompt_rejected": "消息被拒绝",
+      "abort_failed": "中止失败",
+      "compact_failed": "上下文压缩失败",
+      "model_failed": "切换模型失败",
+      "thinking_failed": "切换思考等级失败",
+      "exited": "pi 已退出",
+      "no_answer": "pi 一直没有响应",
+      "did_not_start": "pi 没能启动：{}",
+      "cli_missing": "找不到 pi 的命令行包，先装：npm i -g @earendil-works/pi-coding-agent",
+      "node_missing": "找不到 Node.js，先安装 Node.js 20+，或在设置里指定路径"
+    },
+    "chat": {
+      "retrying": "重试中（{}/{}）：{}",
+      "retry_failed": "重试失败：{}",
+      "compact_failed": "上下文压缩失败"
+    }
   }
 }

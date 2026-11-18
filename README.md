@@ -21,7 +21,9 @@ GPU 绘制的界面、shader 动效、随工具调用起伏的 60 个场景）�
 └──────────────┴─────────────────────────────────────────────────────┘
 ```
 
-![内联 diff、思考、工具气泡](docs/screenshot-edit.png)
+| 中文 | English |
+| --- | --- |
+| ![中文界面](docs/screenshot-edit.png) | ![English UI](docs/screenshot-en.png) |
 
 ## 为什么这么做
 
@@ -67,6 +69,7 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 | 停止 | 输入框右侧「停止」 |
 | 切换/新建会话 | 左侧栏 |
 | 选模型 / thinking | 右上角 |
+| 切换界面语言 | 右上角 `中` / `EN`，立即生效并记住 |
 | 换视觉场景 | 右上角下拉（60 个） |
 | 展开长输出 / diff | 点气泡头部 |
 
@@ -81,12 +84,15 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 | `GAI_PI_NODE` / `GAI_PI_CLI` | 覆盖 node / pi bundle 路径 |
 | `GAI_PI_SESSION` | 启动后打开指定会话（uuid 或 jsonl 路径） |
 | `GAI_PI_FAKE_DIALOG` | 起一个假扩展弹窗（`confirm`/`select`/`input`/`editor`），用于检查样式 |
+| `GAI_PI_LOCALE` | 强制界面语言（`zh` / `en`），用于截图与验收 |
+| `GAI_PI_SWITCH_LOCALE` | 启动 2.5 秒后自动切到另一种语言，用于验证热切换 |
 
 ## 现在能做什么，不能做什么
 
 已完成：启动握手、流式文本与思考、工具气泡（含 `edit` 内联 diff）、运行/停止、
 steer 队列、会话列表与切换、模型与 thinking 切换、上下文压缩事件、扩展弹窗
-（`confirm`/`select`/`input`/`editor`）与 `notify`、60 个视觉场景、多工作目录。
+（`confirm`/`select`/`input`/`editor`）与 `notify`、60 个视觉场景、多工作目录、
+中英双语与运行时切换（含 60 个视觉场景的文案）。
 
 未完成（详见 [ARCHITECTURE.md](ARCHITECTURE.md#八边界与已知不足)）：扩展状态栏/挂件、
 Git 检查点回滚、图片粘贴、编辑器面板、并发多会话、打包分发。

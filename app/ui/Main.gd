@@ -9,15 +9,8 @@ const COMPOSER_HEIGHT := 112
 const FLUSH_INTERVAL_MS := 80
 
 const THINKING_LEVELS := ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
-const THINKING_LABELS := {
-	"off": "Off",
-	"minimal": "Minimal",
-	"low": "Low",
-	"medium": "Medium",
-	"high": "High",
-	"xhigh": "XHigh",
-	"max": "Max",
-}
+## Longest value the usage chip shows before it is replaced by the context label.
+const USAGE_KEY := "gai_pi.topbar.usage"
 
 
 var workspace_host: PiWorkspace = null
@@ -30,6 +23,9 @@ var _follow_tail: bool = true
 var _scroll_requested_at: int = 0
 var _scroll_attempts: int = 0
 var _programmatic_scroll: bool = false
+var _last_scroll_max: float = 0.0
+## While a rebuild or a stream is settling, scrollbar values change without user intent.
+var _follow_until: int = 0
 
 var _top_bar: PanelContainer = null
 var _workspace_button: Button = null
@@ -52,6 +48,11 @@ var _send_button: Button = null
 var _stop_button: Button = null
 var _hint_label: Label = null
 var _workspace_dialog: FileDialog = null
+var _language_button: Button = null
+var _last_usage: OpenAiUsage = null
+var _sidebar_failed: bool = false
+var _switch_locale_at: int = 0
+var _switch_locale_code: String = StringUtils.EMPTY
 var _empty_hint: VBoxContainer = null
 var _dialogs: PiDialogLayer = null
 
@@ -64,8 +65,10 @@ var _started_at: int = 0
 func _ready() -> void:
 	_started_at = Time.get_ticks_msec()
 	_init_i18n()
+	apply_locale_override()
 	ThemeColor.load_theme()
 	build_ui()
+	gdf.events.locale_changed.connect(apply_locale)
 	open_workspace(_initial_workspace())
 	var visual_override := OS.get_environment("GAI_PI_VISUAL").strip_edges()
 	if not visual_override.is_empty():
@@ -73,6 +76,11 @@ func _ready() -> void:
 		_visuals_picker.selected = clampi(visual_override.to_int(), 0, VisualStage.type_names().size() - 1)
 	get_window().title = "gai-pi"
 	_input_field.grab_focus()
+	apply_locale()
+	var switch_env := OS.get_environment("GAI_PI_SWITCH_LOCALE").strip_edges()
+	if not switch_env.is_empty():
+		_switch_locale_code = switch_env
+		_switch_locale_at = _started_at + 2500
 	_screenshot_target = OS.get_environment("GAI_PI_SCREENSHOT").strip_edges()
 	_screenshot_at = _started_at + int(OS.get_environment("GAI_PI_SCREENSHOT_DELAY").to_int() if not OS.get_environment("GAI_PI_SCREENSHOT_DELAY").is_empty() else 6000)
 
@@ -85,6 +93,10 @@ func _process(_delta: float) -> void:
 	if now - _last_flush >= FLUSH_INTERVAL_MS and not _dirty_bubbles.is_empty():
 		_last_flush = now
 		flush_bubbles()
+	watch_scroll_extent()
+	if _switch_locale_at > 0 and now >= _switch_locale_at:
+		_switch_locale_at = 0
+		switch_language(_switch_locale_code)
 	if _scroll_requested_at > 0 and now - _scroll_requested_at >= 50:
 		_scroll_requested_at = 0 if _scroll_attempts <= 1 else now
 		_scroll_attempts -= 1
@@ -164,7 +176,7 @@ func build_top_bar() -> Control:
 	logo.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(logo)
 
-	_workspace_button = make_flat_button("project", "Switch workspace")
+	_workspace_button = make_flat_button("", "")
 	_workspace_button.pressed.connect(on_workspace_pressed)
 	row.add_child(_workspace_button)
 
@@ -179,11 +191,11 @@ func build_top_bar() -> Control:
 	_usage_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(_usage_label)
 
-	_model_button = make_flat_button("model", "Choose model")
+	_model_button = make_flat_button("", "")
 	_model_button.pressed.connect(on_model_pressed)
 	row.add_child(_model_button)
 
-	_thinking_button = make_flat_button("thinking", "Thinking level")
+	_thinking_button = make_flat_button("", "")
 	_thinking_button.pressed.connect(on_thinking_pressed)
 	row.add_child(_thinking_button)
 
@@ -192,12 +204,16 @@ func build_top_bar() -> Control:
 	_visuals_picker.focus_mode = FOCUS_NONE
 	_visuals_picker.add_theme_font_override("font", Fonts.regular())
 	_visuals_picker.add_theme_font_size_override("font_size", Typography.body_small)
-	_visuals_picker.tooltip_text = "Agent visual"
+
 	for index in VisualStage.type_names().size():
 		_visuals_picker.add_item(VisualStage.localized_name(index), index)
 	_visuals_picker.selected = clampi(AppSetting.get_int(AppSetting.KEY_VISUAL, 0), 0, VisualStage.type_names().size() - 1)
 	_visuals_picker.item_selected.connect(on_visual_selected)
 	row.add_child(_visuals_picker)
+
+	_language_button = make_flat_button("", "")
+	_language_button.pressed.connect(on_language_pressed)
+	row.add_child(_language_button)
 
 	_dialogs = PiDialogLayer.new()
 	_dialogs.answered.connect(on_dialog_answered)
@@ -218,7 +234,7 @@ func build_top_bar() -> Control:
 	_workspace_dialog = FileDialog.new()
 	_workspace_dialog.file_mode = FileDialog.FILE_MODE_OPEN_DIR
 	_workspace_dialog.access = FileDialog.ACCESS_FILESYSTEM
-	_workspace_dialog.title = "Choose workspace"
+	_workspace_dialog.title = T.t("gai_pi.topbar.switch_workspace")
 	_workspace_dialog.use_native_dialog = true
 	_workspace_dialog.dir_selected.connect(on_workspace_selected)
 	add_child(_workspace_dialog)
@@ -244,7 +260,7 @@ func build_sidebar() -> Control:
 	panel.add_child(column)
 
 	_new_session_button = Button.new()
-	_new_session_button.text = "＋  New session"
+	_new_session_button.text = T.t("gai_pi.sidebar.new")
 	_new_session_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_new_session_button.add_theme_font_override("font", Fonts.medium())
 	_new_session_button.add_theme_font_size_override("font_size", Typography.body_medium)
@@ -337,7 +353,7 @@ func build_composer() -> Control:
 	_composer.add_child(column)
 
 	_input_field = TextEdit.new()
-	_input_field.placeholder_text = "Ask pi to read, change, or verify something…"
+	_input_field.placeholder_text = T.t("gai_pi.composer.placeholder")
 	_input_field.custom_minimum_size = Vector2(0, 56)
 	_input_field.size_flags_vertical = SIZE_EXPAND_FILL
 	_input_field.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
@@ -356,7 +372,7 @@ func build_composer() -> Control:
 	column.add_child(row)
 
 	_hint_label = Label.new()
-	_hint_label.text = "Enter sends · Shift+Enter newline"
+	_hint_label.text = T.t("gai_pi.composer.hint")
 	_hint_label.add_theme_font_override("font", Fonts.code())
 	_hint_label.add_theme_font_size_override("font_size", Typography.body_small - 1)
 	_hint_label.add_theme_color_override("font_color", ThemeColor.body_color.darkened(0.2))
@@ -364,14 +380,14 @@ func build_composer() -> Control:
 	_hint_label.size_flags_horizontal = SIZE_EXPAND_FILL
 	row.add_child(_hint_label)
 
-	_stop_button = make_flat_button("■ Stop", "Abort the run")
+	_stop_button = make_flat_button(T.t("gai_pi.composer.stop"), T.t("gai_pi.composer.stop_tooltip"))
 	_stop_button.add_theme_color_override("font_color", Color("#ff8f8f"))
 	_stop_button.pressed.connect(on_stop_pressed)
 	_stop_button.visible = false
 	row.add_child(_stop_button)
 
 	_send_button = Button.new()
-	_send_button.text = "Send"
+	_send_button.text = T.t("gai_pi.composer.send")
 	_send_button.add_theme_font_override("font", Fonts.semibold())
 	_send_button.add_theme_font_size_override("font_size", Typography.body_medium)
 	_send_button.custom_minimum_size = Vector2(84, 30)
@@ -433,7 +449,8 @@ func open_workspace(path: String) -> void:
 	AppSetting.set_string(AppSetting.KEY_WORKSPACE, path)
 	PiEvents.events.workspace_changed.emit(path)
 	_workspace_button.text = _short_path(path)
-	_sidebar_status.text = "starting pi…"
+	_sidebar_failed = false
+	_sidebar_status.text = T.t("gai_pi.sidebar.starting")
 	workspace_host.start()
 
 
@@ -493,6 +510,7 @@ func on_workspace_ready() -> void:
 
 
 func on_workspace_failed(message: String) -> void:
+	_sidebar_failed = true
 	_sidebar_status.text = message
 	show_status(message)
 
@@ -588,7 +606,7 @@ func update_empty_state() -> void:
 	title.add_theme_color_override("font_color", ThemeColor.theme_color)
 	_empty_hint.add_child(title)
 	var subtitle := Label.new()
-	subtitle.text = "pi is loaded here — ask it to read, change, or verify this workspace."
+	subtitle.text = T.t("gai_pi.empty.subtitle")
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	subtitle.add_theme_font_override("font", Fonts.regular())
 	subtitle.add_theme_font_size_override("font_size", Typography.body_medium)
@@ -603,10 +621,27 @@ func update_empty_state() -> void:
 	_empty_hint.add_child(path_label)
 
 
+## Keeps the tail visible when the transcript grows between frames, such as a 400-entry rebuild
+## whose layout settles after the short retry window.
+func watch_scroll_extent() -> void:
+	if _scroll == null:
+		return
+	var bar := _scroll.get_v_scroll_bar()
+	if bar == null:
+		return
+	if is_equal_approx(bar.max_value, _last_scroll_max):
+		return
+	_last_scroll_max = bar.max_value
+	if _follow_tail:
+		scroll_to_bottom()
+
+
 ## Requests a follow-the-tail scroll; several frames are retried so a long rebuild can settle.
 func scroll_to_bottom() -> void:
+	_follow_tail = true
+	_follow_until = Time.get_ticks_msec() + 1500
 	_scroll_requested_at = Time.get_ticks_msec()
-	_scroll_attempts = 3
+	_scroll_attempts = 24
 
 
 func apply_scroll_bottom() -> void:
@@ -623,6 +658,8 @@ func apply_scroll_bottom() -> void:
 ## User scrolling away from the bottom stops auto-follow until they scroll back down.
 func on_scroll_changed(value: float) -> void:
 	if _programmatic_scroll or _scroll == null:
+		return
+	if Time.get_ticks_msec() < _follow_until:
 		return
 	var bar := _scroll.get_v_scroll_bar()
 	if bar == null:
@@ -686,7 +723,7 @@ func on_new_session_pressed() -> void:
 	if workspace_host == null:
 		return
 	if workspace_host.is_streaming:
-		show_status("Stop the running turn before starting a new session")
+		show_status(T.t("gai_pi.status.new_while_running"))
 		return
 	clear_transcript()
 	workspace_host.new_session()
@@ -711,7 +748,7 @@ func on_model_pressed() -> void:
 		return
 	workspace_host.get_models(func(result: Dictionary) -> void:
 		if not bool(result.get("success", false)):
-			show_status("Could not list models")
+			show_status(T.t("gai_pi.status.models_failed"))
 			return
 		var data := PiSession.as_dictionary(result.get("data", {}))
 		var menu := PopupMenu.new()
@@ -739,7 +776,7 @@ func on_thinking_pressed() -> void:
 	menu.add_theme_font_override("font", Fonts.regular())
 	for index in THINKING_LEVELS.size():
 		var level: String = THINKING_LEVELS[index]
-		menu.add_item(THINKING_LABELS.get(level, level.capitalize()), index)
+		menu.add_item(thinking_label(level), index)
 	menu.id_pressed.connect(func(index: int) -> void:
 		if workspace_host != null and index >= 0 and index < THINKING_LEVELS.size():
 			workspace_host.set_thinking_level(THINKING_LEVELS[index])
@@ -754,21 +791,29 @@ func on_streaming_changed(streaming: bool) -> void:
 	if _stop_button != null:
 		_stop_button.visible = streaming
 	if _send_button != null:
-		_send_button.text = "Steer" if streaming else "Send"
+		_send_button.text = T.t("gai_pi.composer.steer") if streaming else T.t("gai_pi.composer.send")
 
 
 func on_state_changed() -> void:
 	if workspace_host == null:
 		return
 	_model_button.text = workspace_host.model_label if not workspace_host.model_label.is_empty() else "model"
-	_thinking_button.text = THINKING_LABELS.get(workspace_host.thinking_level, workspace_host.thinking_level)
+	_thinking_button.text = thinking_label(workspace_host.thinking_level)
 	refresh_sessions()
 
 
 func on_usage_changed(usage: OpenAiUsage) -> void:
+	_last_usage = usage
+	render_usage()
+
+
+func render_usage() -> void:
 	if _usage_label == null:
 		return
-	_usage_label.text = "ctx %s" % format_tokens(usage.prompt_tokens) if usage.has_data() else StringUtils.EMPTY
+	if _last_usage == null or not _last_usage.has_data():
+		_usage_label.text = StringUtils.EMPTY
+		return
+	_usage_label.text = T.t("gai_pi.topbar.usage", [format_tokens(_last_usage.prompt_tokens)])
 
 
 # ---------------------------------------------------------------------------
@@ -786,7 +831,7 @@ func refresh_sessions() -> void:
 		_session_list.add_child(build_session_row(meta, str(meta.get("path", "")) == active_path))
 	if sessions.is_empty():
 		var empty := Label.new()
-		empty.text = "No sessions yet"
+		empty.text = T.t("gai_pi.sidebar.empty")
 		empty.add_theme_font_override("font", Fonts.code())
 		empty.add_theme_font_size_override("font_size", Typography.body_small)
 		empty.add_theme_color_override("font_color", ThemeColor.body_color.darkened(0.25))
@@ -814,7 +859,7 @@ func build_session_row(meta: Dictionary, is_active: bool) -> Control:
 		if workspace_host == null or path.is_empty():
 			return
 		if workspace_host.is_streaming:
-			show_status("Stop the running turn before switching sessions")
+			show_status(T.t("gai_pi.status.switch_while_running"))
 			return
 		workspace_host.switch_session(path)
 	)
@@ -830,7 +875,8 @@ func build_session_row(meta: Dictionary, is_active: bool) -> Control:
 	button.add_child(column)
 
 	var title := Label.new()
-	title.text = str(meta.get("title", "Session"))
+	var raw_title := str(meta.get("title", StringUtils.EMPTY))
+	title.text = raw_title if not raw_title.is_empty() else T.t("gai_pi.sidebar.untitled")
 	title.clip_text = true
 	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	title.add_theme_font_override("font", Fonts.medium())
@@ -849,6 +895,92 @@ func build_session_row(meta: Dictionary, is_active: bool) -> Control:
 	preview.mouse_filter = MOUSE_FILTER_IGNORE
 	column.add_child(preview)
 	return button
+
+
+# ---------------------------------------------------------------------------
+# Language
+# ---------------------------------------------------------------------------
+
+## Re-applies every shell string; called on boot and whenever the locale changes.
+func apply_locale() -> void:
+	if _workspace_button == null:
+		return
+	_workspace_button.tooltip_text = T.t("gai_pi.topbar.switch_workspace")
+	_model_button.tooltip_text = T.t("gai_pi.topbar.choose_model")
+	_thinking_button.tooltip_text = T.t("gai_pi.topbar.thinking")
+	_visuals_picker.tooltip_text = T.t("gai_pi.topbar.visual")
+	_language_button.text = T.t("gai_pi.language.code")
+	_language_button.tooltip_text = T.t("gai_pi.topbar.language")
+	if _workspace_dialog != null:
+		_workspace_dialog.title = T.t("gai_pi.topbar.switch_workspace")
+	_new_session_button.text = T.t("gai_pi.sidebar.new")
+	_stop_button.text = T.t("gai_pi.composer.stop")
+	_stop_button.tooltip_text = T.t("gai_pi.composer.stop_tooltip")
+	var streaming := workspace_host != null and workspace_host.is_streaming
+	_send_button.text = T.t("gai_pi.composer.steer") if streaming else T.t("gai_pi.composer.send")
+	_input_field.placeholder_text = T.t("gai_pi.composer.placeholder")
+	_hint_label.text = T.t("gai_pi.composer.hint")
+	if workspace_host != null and not workspace_host.is_ready and not _sidebar_failed:
+		_sidebar_status.text = T.t("gai_pi.sidebar.starting")
+	refresh_visual_picker()
+	refresh_sessions()
+	update_empty_state()
+	render_usage()
+	on_state_changed()
+	for bubble in _bubbles.values():
+		if is_instance_valid(bubble):
+			bubble.refresh()
+	if _dialogs != null and _dialogs.is_open():
+		_dialogs.rebuild()
+
+
+func refresh_visual_picker() -> void:
+	if _visuals_picker == null:
+		return
+	var selected := _visuals_picker.selected
+	_visuals_picker.clear()
+	for index in VisualStage.type_names().size():
+		_visuals_picker.add_item(VisualStage.localized_name(index), index)
+	_visuals_picker.selected = clampi(selected, 0, VisualStage.type_names().size() - 1)
+
+
+func thinking_label(level: String) -> String:
+	if level.is_empty():
+		return T.t("gai_pi.topbar.thinking")
+	var key := "gai_pi.thinking." + level
+	var text := T.t(key)
+	return text if text != key else level.capitalize()
+
+
+func on_language_pressed() -> void:
+	var menu := PopupMenu.new()
+	menu.add_theme_font_override("font", Fonts.regular())
+	menu.add_item(T.t("gai_pi.language.zh"), 0)
+	menu.add_item(T.t("gai_pi.language.en"), 1)
+	menu.set_item_checked(0 if T.locale_code() == "zh" else 1, true)
+	menu.id_pressed.connect(func(index: int) -> void:
+		switch_language("zh" if index == 0 else "en")
+	)
+	add_child(menu)
+	menu.popup_hide.connect(menu.queue_free)
+	menu.position = Vector2i(get_global_mouse_position())
+	menu.popup()
+
+
+## Switches the interface language immediately; I18n persists the choice.
+func switch_language(code: String) -> void:
+	if code == T.locale_code() and I18n.is_initialized():
+		return
+	I18n.set_locale("res://app/locale/zh.json" if code == "zh" else "res://app/locale/en.json")
+	# I18n.set_locale emits gdf.events.locale_changed, which runs apply_locale().
+
+
+## GAI_PI_LOCALE forces a language for screenshots and verification runs.
+func apply_locale_override() -> void:
+	var code := OS.get_environment("GAI_PI_LOCALE").strip_edges()
+	if code.is_empty():
+		return
+	I18n.set_locale("res://app/locale/zh.json" if code.begins_with("zh") else "res://app/locale/en.json")
 
 
 # ---------------------------------------------------------------------------

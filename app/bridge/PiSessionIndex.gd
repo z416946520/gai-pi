@@ -100,12 +100,8 @@ static func read_meta(path: String) -> Dictionary:
 	meta["first_user"] = first_user
 	meta["preview"] = last_text
 	if str(meta["title"]).is_empty():
-		if not first_user.is_empty():
-			meta["title"] = first_user
-		elif not last_text.is_empty():
-			meta["title"] = last_text
-		else:
-			meta["title"] = "New session"
+		# The shell supplies a translated placeholder when both stay empty.
+		meta["title"] = first_user if not first_user.is_empty() else last_text
 	return meta
 
 
