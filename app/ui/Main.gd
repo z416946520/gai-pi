@@ -923,7 +923,6 @@ func apply_locale() -> void:
 	if workspace_host != null and not workspace_host.is_ready and not _sidebar_failed:
 		_sidebar_status.text = T.t("gai_pi.sidebar.starting")
 	refresh_visual_picker()
-	refresh_sessions()
 	update_empty_state()
 	render_usage()
 	on_state_changed()
