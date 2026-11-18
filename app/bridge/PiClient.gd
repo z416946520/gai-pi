@@ -88,6 +88,13 @@ func answer_ui(id: String, value: Variant) -> void:
 	_send({"type": "extension_ui_response", "id": id, "value": value})
 
 
+## Sends a full response payload: `{"value": ...}`, `{"confirmed": bool}`, or `{"cancelled": true}`.
+func respond_ui(id: String, payload: Dictionary) -> void:
+	var record := {"type": "extension_ui_response", "id": id}
+	record.merge(payload, true)
+	_send(record)
+
+
 func cancel_ui(id: String) -> void:
 	_send({"type": "extension_ui_response", "id": id, "cancelled": true})
 

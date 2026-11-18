@@ -1,6 +1,12 @@
-# gai-pi
+<p align="center">
+  <img src="icon.svg" width="112" alt="gai-pi logo">
+</p>
 
-**pi 的桌面端。** 外壳是一个 Godot 4.6 场景（沿用 [gai](https://github.com/godot-fun/gai) 的视觉语言：
+<h1 align="center">gai-pi</h1>
+
+<p align="center"><b>pi 的桌面端。</b></p>
+
+ 外壳是一个 Godot 4.6 场景（沿用 [gai](https://github.com/godot-fun/gai) 的视觉语言：
 GPU 绘制的界面、shader 动效、随工具调用起伏的 60 个场景），大脑是官方 `pi --mode rpc` 子进程。
 
 ```

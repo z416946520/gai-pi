@@ -14,6 +14,8 @@ signal session_loaded(session: PiSession)
 signal state_changed
 signal streaming_changed(streaming: bool)
 signal prompt_done(disposition: String)
+signal dialog_requested(data: Dictionary)
+signal notification(message: String, level: String)
 
 const LAUNCHER_CMD := "launch.cmd"
 const LAUNCHER_SH := "launch.sh"
@@ -290,14 +292,25 @@ func on_event(data: Dictionary) -> void:
 
 func on_ui_request(data: Dictionary) -> void:
 	var method := str(data.get("method", StringUtils.EMPTY))
-	# Fire-and-forget extension UI (status chips, widgets) is not part of v1.
-	if method == "setStatus" or method == "setWidget" or method == "setTitle":
+	match method:
+		"setStatus", "setWidget", "setTitle":
+			# Status chips and widgets have no shell surface yet.
+			return
+		"notify":
+			notification.emit(str(data.get("message", StringUtils.EMPTY)), str(data.get("notifyType", "info")))
+			return
+		_:
+			pass
+	if str(data.get("id", StringUtils.EMPTY)).is_empty():
 		return
-	var id := str(data.get("id", StringUtils.EMPTY))
-	if id.is_empty():
+	dialog_requested.emit(data)
+
+
+## Answers one extension dialog with `{"value": ...}`, `{"confirmed": bool}`, or `{"cancelled": true}`.
+func answer_dialog(id: String, payload: Dictionary) -> void:
+	if client == null:
 		return
-	# Dialog methods have no shell surface yet; cancel so extensions never hang.
-	client.cancel_ui(id)
+	client.respond_ui(id, payload)
 
 
 func on_closed(_exit_code: int) -> void:

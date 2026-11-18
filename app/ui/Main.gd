@@ -53,6 +53,7 @@ var _stop_button: Button = null
 var _hint_label: Label = null
 var _workspace_dialog: FileDialog = null
 var _empty_hint: VBoxContainer = null
+var _dialogs: PiDialogLayer = null
 
 ## Verification hook: GAI_PI_SCREENSHOT=<png path> renders one frame, saves it, and quits.
 var _screenshot_target: String = StringUtils.EMPTY
@@ -197,6 +198,10 @@ func build_top_bar() -> Control:
 	_visuals_picker.selected = clampi(AppSetting.get_int(AppSetting.KEY_VISUAL, 0), 0, VisualStage.type_names().size() - 1)
 	_visuals_picker.item_selected.connect(on_visual_selected)
 	row.add_child(_visuals_picker)
+
+	_dialogs = PiDialogLayer.new()
+	_dialogs.answered.connect(on_dialog_answered)
+	add_child(_dialogs)
 
 	_status_label = Label.new()
 	_status_label.add_theme_font_override("font", Fonts.code())
@@ -419,6 +424,8 @@ func open_workspace(path: String) -> void:
 	workspace_host.streaming_changed.connect(on_streaming_changed)
 	workspace_host.state_changed.connect(on_state_changed)
 	workspace_host.prompt_done.connect(on_prompt_done)
+	workspace_host.dialog_requested.connect(on_dialog_requested)
+	workspace_host.notification.connect(on_notification)
 	AppSetting.set_string(AppSetting.KEY_WORKSPACE, path)
 	PiEvents.events.workspace_changed.emit(path)
 	_workspace_button.text = _short_path(path)
@@ -428,6 +435,28 @@ func open_workspace(path: String) -> void:
 
 func on_prompt_done(_disposition: String) -> void:
 	refresh_sessions()
+
+
+func on_dialog_requested(data: Dictionary) -> void:
+	if _dialogs != null:
+		_dialogs.request(data)
+
+
+func on_dialog_answered(id: String, payload: Dictionary) -> void:
+	if workspace_host != null:
+		workspace_host.answer_dialog(id, payload)
+
+
+func on_notification(message: String, level: String) -> void:
+	if _status_label == null:
+		return
+	if level == "error":
+		_status_label.add_theme_color_override("font_color", Color("#ff8f8f"))
+	elif level == "warning":
+		_status_label.add_theme_color_override("font_color", Color("#ffd479"))
+	else:
+		_status_label.add_theme_color_override("font_color", ThemeColor.body_color)
+	show_status(message)
 
 
 func on_workspace_ready() -> void:
