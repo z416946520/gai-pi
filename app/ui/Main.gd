@@ -7,6 +7,13 @@ const SIDEBAR_MIN_WIDTH := 240
 const TOP_BAR_HEIGHT := 46
 const COMPOSER_HEIGHT := 112
 const FLUSH_INTERVAL_MS := 80
+## Millisecond budget for replaying a session per frame; 400+ entries must not stall a frame.
+const BUILD_BUDGET_MS := 8
+## Bubbles re-rendered per flush tick, so a language switch cannot freeze for a second.
+const FLUSH_BATCH := 24
+## Entries built when a session opens; earlier history loads on demand so switching is instant.
+const TRANSCRIPT_WINDOW := 50
+const TRANSCRIPT_WINDOW_STEP := 60
 
 const THINKING_LEVELS := ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 ## Longest value the usage chip shows before it is replaced by the context label.
@@ -51,6 +58,18 @@ var _workspace_dialog: FileDialog = null
 var _language_button: Button = null
 var _last_usage: OpenAiUsage = null
 var _sidebar_failed: bool = false
+var _build_queue: Array[ChatEntry] = []
+var _build_generation: int = 0
+var _build_started_at: int = 0
+var _sessions_signature: String = StringUtils.EMPTY
+var _window_start: int = 0
+var _load_earlier_button: Button = null
+var _session_search: LineEdit = null
+var _prompt: ModalPrompt = null
+var _pinned_paths: Array[String] = []
+var _pending_delete: String = StringUtils.EMPTY
+var _preview_visual_at: int = 0
+var _preview_visual_type: int = -1
 var _switch_locale_at: int = 0
 var _switch_locale_code: String = StringUtils.EMPTY
 var _empty_hint: VBoxContainer = null
@@ -76,7 +95,14 @@ func _ready() -> void:
 		_visuals_picker.selected = clampi(visual_override.to_int(), 0, VisualStage.type_names().size() - 1)
 	get_window().title = "gai-pi"
 	_input_field.grab_focus()
+	_prompt = ModalPrompt.new()
+	add_child(_prompt)
+	load_pins()
 	apply_locale()
+	var preview_visual := OS.get_environment("GAI_PI_PREVIEW_VISUAL").strip_edges()
+	if not preview_visual.is_empty():
+		_preview_visual_type = preview_visual.to_int()
+		_preview_visual_at = _started_at + 2500
 	var switch_env := OS.get_environment("GAI_PI_SWITCH_LOCALE").strip_edges()
 	if not switch_env.is_empty():
 		_switch_locale_code = switch_env
@@ -93,7 +119,13 @@ func _process(_delta: float) -> void:
 	if now - _last_flush >= FLUSH_INTERVAL_MS and not _dirty_bubbles.is_empty():
 		_last_flush = now
 		flush_bubbles()
+	if not _build_queue.is_empty():
+		build_next_batch()
 	watch_scroll_extent()
+	if _preview_visual_at > 0 and now >= _preview_visual_at:
+		_preview_visual_at = 0
+		if _visual_stage != null:
+			_visual_stage.apply_visual_type(_preview_visual_type)
 	if _switch_locale_at > 0 and now >= _switch_locale_at:
 		_switch_locale_at = 0
 		switch_language(_switch_locale_code)
@@ -261,12 +293,23 @@ func build_sidebar() -> Control:
 
 	_new_session_button = Button.new()
 	_new_session_button.text = T.t("gai_pi.sidebar.new")
+	if _session_search != null:
+		_session_search.placeholder_text = T.t("gai_pi.session.search_placeholder")
 	_new_session_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_new_session_button.add_theme_font_override("font", Fonts.medium())
 	_new_session_button.add_theme_font_size_override("font_size", Typography.body_medium)
 	_new_session_button.custom_minimum_size = Vector2(0, 36)
 	_new_session_button.pressed.connect(on_new_session_pressed)
 	column.add_child(_new_session_button)
+
+	_session_search = LineEdit.new()
+	_session_search.custom_minimum_size = Vector2(0, 30)
+	_session_search.clear_button_enabled = true
+	_session_search.add_theme_font_override("font", Fonts.regular())
+	_session_search.add_theme_font_size_override("font_size", Typography.body_small)
+	style_sidebar_field(_session_search)
+	_session_search.text_changed.connect(func(_text: String) -> void: refresh_sessions(true))
+	column.add_child(_session_search)
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = SIZE_EXPAND_FILL
@@ -312,6 +355,32 @@ func build_chat_area() -> Control:
 	_entries_box.size_flags_horizontal = SIZE_EXPAND_FILL
 	_entries_box.add_theme_constant_override("separation", Margin.ma_2)
 	margin_container.add_child(_entries_box)
+
+	_load_earlier_button = Button.new()
+	_load_earlier_button.anchor_left = 0.5
+	_load_earlier_button.anchor_right = 0.5
+	_load_earlier_button.offset_left = 0
+	_load_earlier_button.offset_right = 0
+	_load_earlier_button.offset_top = Margin.ma_3
+	_load_earlier_button.offset_bottom = Margin.ma_3 + 30
+	_load_earlier_button.grow_horizontal = GROW_DIRECTION_BOTH
+	_load_earlier_button.focus_mode = FOCUS_NONE
+	_load_earlier_button.visible = false
+	_load_earlier_button.add_theme_font_override("font", Fonts.regular())
+	_load_earlier_button.add_theme_font_size_override("font_size", Typography.body_small)
+	_load_earlier_button.add_theme_color_override("font_color", ThemeColor.title_color)
+	var pill := StyleBoxFlat.new()
+	pill.bg_color = Color(Colors.DARK_CONTROL_SURFACE, 0.92)
+	pill.border_color = Colors.DARK_OUTLINE_VARIANT
+	pill.set_border_width_all(1)
+	pill.set_corner_radius_all(15)
+	pill.content_margin_left = Margin.ma_3
+	pill.content_margin_right = Margin.ma_3
+	_load_earlier_button.add_theme_stylebox_override("normal", pill)
+	_load_earlier_button.add_theme_stylebox_override("hover", pill)
+	_load_earlier_button.add_theme_stylebox_override("pressed", pill)
+	_load_earlier_button.pressed.connect(on_load_earlier_pressed)
+	area.add_child(_load_earlier_button)
 
 	_empty_hint = VBoxContainer.new()
 	_empty_hint.set_anchors_preset(PRESET_FULL_RECT)
@@ -517,13 +586,75 @@ func on_workspace_failed(message: String) -> void:
 
 func on_session_loaded(loaded: PiSession) -> void:
 	print("[gai-pi] session ", loaded.pi_id, " entries=", loaded.entries.size(), " path=", loaded.path)
+	if _sidebar_status != null and not _sidebar_failed:
+		_sidebar_status.text = StringUtils.EMPTY
 	session = loaded
 	_apply_session_signals(loaded)
+	start_transcript_build(loaded.entries)
+	refresh_sessions(true)
+	if not _pending_delete.is_empty() and loaded.path != _pending_delete:
+		var stale := _pending_delete
+		_pending_delete = StringUtils.EMPTY
+		remove_session_file(stale)
+
+
+## Replays a session across frames; the interface stays responsive while hundreds of
+## markdown bubbles are being laid out.
+func start_transcript_build(entries: Array[ChatEntry]) -> void:
 	clear_transcript()
-	for entry in loaded.entries:
-		add_bubble(entry)
-	refresh_sessions()
-	scroll_to_bottom()
+	_build_generation += 1
+	var start := maxi(0, entries.size() - TRANSCRIPT_WINDOW)
+	_window_start = start
+	_build_queue = entries.slice(start, entries.size())
+	_build_started_at = Time.get_ticks_msec()
+	update_load_earlier()
+	build_next_batch()
+
+
+func build_next_batch() -> void:
+	var generation := _build_generation
+	var started := Time.get_ticks_msec()
+	while not _build_queue.is_empty() and generation == _build_generation:
+		add_bubble(_build_queue.pop_front())
+		if Time.get_ticks_msec() - started >= BUILD_BUDGET_MS:
+			break
+	if generation != _build_generation:
+		return
+	if _build_queue.is_empty():
+		scroll_to_bottom()
+		print("[gai-pi] transcript ready entries=", _bubbles.size(), " window_start=", _window_start, " in ", Time.get_ticks_msec() - _build_started_at, "ms")
+
+
+## Shows or hides the "load earlier" pill above the transcript.
+func update_load_earlier() -> void:
+	if _load_earlier_button == null:
+		return
+	var hidden_count := _window_start
+	_load_earlier_button.visible = hidden_count > 0
+	if hidden_count > 0:
+		_load_earlier_button.text = T.t("gai_pi.chat.load_earlier", [mini(hidden_count, TRANSCRIPT_WINDOW_STEP), hidden_count])
+
+
+func on_load_earlier_pressed() -> void:
+	if session == null or _window_start <= 0:
+		return
+	var from := maxi(0, _window_start - TRANSCRIPT_WINDOW_STEP)
+	var slice := session.entries.slice(from, _window_start)
+	var old_height := _entries_box.size.y
+	for index in slice.size():
+		var bubble := make_bubble(slice[index])
+		_entries_box.add_child(bubble)
+		_entries_box.move_child(bubble, index)
+	_window_start = from
+	update_load_earlier()
+	# Keep the reader's position: the window grew above the viewport.
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var added := _entries_box.size.y - old_height
+	if added > 0:
+		_programmatic_scroll = true
+		_scroll.scroll_vertical += int(added)
+		_programmatic_scroll = false
 
 
 func _apply_session_signals(target: PiSession) -> void:
@@ -545,12 +676,43 @@ func on_entry_added(entry: ChatEntry) -> void:
 		scroll_to_bottom()
 
 
+func make_bubble(entry: ChatEntry) -> ChatBubble:
+	var bubble := ChatBubble.new()
+	bubble.setup(entry)
+	bubble.expand_toggled.connect(on_bubble_expanded)
+	bubble.copy_requested.connect(on_copy_entry)
+	bubble.prefill_requested.connect(on_prefill_entry)
+	bubble.restore_requested.connect(on_restore_entry)
+	return bubble
+
+
+func on_copy_entry(entry: ChatEntry) -> void:
+	DisplayServer.clipboard_set(entry.body)
+	show_status(T.t("gai_pi.chat.copied"))
+
+
+func on_prefill_entry(entry: ChatEntry) -> void:
+	_input_field.text = entry.body
+	_input_field.grab_focus()
+	_input_field.set_caret_line(maxi(0, _input_field.get_line_count() - 1))
+
+
+func on_restore_entry(entry: ChatEntry) -> void:
+	if session == null:
+		return
+	var error := session.restore_snapshot(entry.tool_call_id)
+	show_status(T.t("gai_pi.chat.restore_failed") if not error.is_empty() else T.t("gai_pi.chat.restored"))
+
+
+func on_bubble_expanded() -> void:
+	if _follow_tail:
+		scroll_to_bottom()
+
+
 func add_bubble(entry: ChatEntry) -> void:
 	if _bubbles.has(entry):
 		return
-	var bubble := ChatBubble.new()
-	bubble.setup(entry)
-	bubble.expand_toggled.connect(scroll_to_bottom)
+	var bubble := make_bubble(entry)
 	_entries_box.add_child(bubble)
 	_bubbles[entry] = bubble
 	update_empty_state()
@@ -571,13 +733,15 @@ func on_entry_updated(entry: ChatEntry, _stream_kind: String) -> void:
 
 
 func flush_bubbles() -> void:
-	for bubble in _dirty_bubbles:
+	var refreshed := 0
+	while not _dirty_bubbles.is_empty() and refreshed < FLUSH_BATCH:
+		var bubble: ChatBubble = _dirty_bubbles.pop_front()
+		refreshed += 1
 		if is_instance_valid(bubble):
 			bubble.refresh()
 			if bubble.entry != null and (bubble.entry.running or bubble.entry.kind == ChatEntry.KIND_AGENT):
 				if _follow_tail:
 					scroll_to_bottom()
-	_dirty_bubbles.clear()
 
 
 func clear_transcript() -> void:
@@ -586,6 +750,11 @@ func clear_transcript() -> void:
 			bubble.queue_free()
 	_bubbles.clear()
 	_dirty_bubbles.clear()
+	_build_generation += 1
+	_build_queue.clear()
+	_window_start = 0
+	if _load_earlier_button != null:
+		_load_earlier_button.visible = false
 	update_empty_state()
 
 
@@ -593,7 +762,7 @@ func clear_transcript() -> void:
 func update_empty_state() -> void:
 	if _empty_hint == null:
 		return
-	_empty_hint.visible = _bubbles.is_empty()
+	_empty_hint.visible = _bubbles.is_empty() and _build_queue.is_empty() and _window_start == 0
 	if not _empty_hint.visible:
 		return
 	for child in _empty_hint.get_children():
@@ -681,6 +850,8 @@ func _input(event: InputEvent) -> void:
 	var key := event as InputEventKey
 	if key == null or not key.pressed or key.echo:
 		return
+	if _prompt != null and _prompt.visible:
+		return
 	if _dialogs != null and _dialogs.is_open():
 		# A modal owns the keyboard: Escape cancels, Enter must not reach the composer.
 		if key.keycode == KEY_ESCAPE:
@@ -740,7 +911,10 @@ func on_workspace_selected(path: String) -> void:
 
 
 func on_visual_selected(index: int) -> void:
-	AppSetting.set_int(AppSetting.KEY_VISUAL, index)
+	if _visual_stage == null:
+		AppSetting.set_int(AppSetting.KEY_VISUAL, index)
+		return
+	_visual_stage.apply_visual_type(index)
 
 
 func on_model_pressed() -> void:
@@ -820,16 +994,138 @@ func render_usage() -> void:
 # Sessions
 # ---------------------------------------------------------------------------
 
-func refresh_sessions() -> void:
+## Right-click menu for a session row: pin, rename, delete.
+func show_session_menu(meta: Dictionary, pinned: bool) -> void:
+	var path := str(meta.get("path", StringUtils.EMPTY))
+	if path.is_empty():
+		return
+	var streaming := workspace_host != null and workspace_host.is_streaming
+	var active := session != null and session.path == path
+	var menu := PopupMenu.new()
+	menu.add_theme_font_override("font", Fonts.regular())
+	menu.add_item(T.t("gai_pi.session.unpin") if pinned else T.t("gai_pi.session.pin"), 0)
+	menu.add_item(T.t("gai_pi.session.rename"), 1)
+	menu.add_item(T.t("gai_pi.session.delete"), 2)
+	menu.set_item_disabled(1, not active)
+	menu.set_item_disabled(2, streaming)
+	menu.id_pressed.connect(func(index: int) -> void:
+		match index:
+			0:
+				toggle_pin(path)
+			1:
+				rename_active_session(meta)
+			2:
+				ask_delete_session(meta)
+	)
+	add_child(menu)
+	menu.popup_hide.connect(menu.queue_free)
+	menu.position = Vector2i(get_global_mouse_position())
+	menu.popup()
+
+
+func load_pins() -> void:
+	_pinned_paths.clear()
+	var stored := AppSetting.get_string(AppSetting.KEY_PINS)
+	if stored.is_empty():
+		return
+	for path in stored.split("|", false):
+		_pinned_paths.append(path)
+
+
+func save_pins() -> void:
+	AppSetting.set_string(AppSetting.KEY_PINS, "|".join(_pinned_paths))
+
+
+func toggle_pin(path: String) -> void:
+	if _pinned_paths.has(path):
+		_pinned_paths.erase(path)
+	else:
+		_pinned_paths.append(path)
+	save_pins()
+	refresh_sessions(true)
+
+
+func rename_active_session(meta: Dictionary) -> void:
+	if workspace_host == null or session == null:
+		return
+	var path := str(meta.get("path", StringUtils.EMPTY))
+	if session.path != path:
+		show_status(T.t("gai_pi.status.rename_active_only"))
+		return
+	var current := str(meta.get("title", StringUtils.EMPTY))
+	_prompt.ask_text(T.t("gai_pi.session.rename"), current, T.t("gai_pi.session.rename_placeholder"), func(value: String) -> void:
+		workspace_host.set_session_name(value)
+		PiSessionIndex.invalidate(path)
+		refresh_sessions(true)
+	)
+
+
+func ask_delete_session(meta: Dictionary) -> void:
+	if workspace_host == null:
+		return
+	if workspace_host.is_streaming:
+		show_status(T.t("gai_pi.status.delete_while_running"))
+		return
+	var path := str(meta.get("path", StringUtils.EMPTY))
+	if path.is_empty():
+		return
+	_prompt.ask_confirm(T.t("gai_pi.session.delete_title"), T.t("gai_pi.session.delete_message"), func() -> void:
+		delete_session_file(path)
+	)
+
+
+func delete_session_file(path: String) -> void:
+	if session != null and session.path == path:
+		# pi still holds the file open; park the delete until a fresh session is loaded.
+		_pending_delete = path
+		on_new_session_pressed()
+		return
+	remove_session_file(path)
+
+
+func remove_session_file(path: String) -> void:
+	DirAccess.remove_absolute(path)
+	PiSessionIndex.invalidate(path)
+	_pinned_paths.erase(path)
+	save_pins()
+	refresh_sessions(true)
+
+
+func refresh_sessions(force: bool = false) -> void:
 	if _session_list == null or workspace_host == null:
 		return
+	var active_path := session.path if session != null else StringUtils.EMPTY
+	var filter := _session_search.text.strip_edges().to_lower() if _session_search != null else StringUtils.EMPTY
+	var pinned_rows: Array[Dictionary] = []
+	var recent_rows: Array[Dictionary] = []
+	var signature_parts := PackedStringArray([active_path, filter, "|".join(_pinned_paths)])
+	for meta in workspace_host.session_list():
+		var path := str(meta.get("path", ""))
+		var title := str(meta.get("title", ""))
+		var preview := str(meta.get("preview", ""))
+		signature_parts.append("%s|%s|%s" % [path, title, str(meta.get("modified", 0))])
+		if not filter.is_empty() and not title.to_lower().contains(filter) and not preview.to_lower().contains(filter):
+			continue
+		if _pinned_paths.has(path):
+			pinned_rows.append(meta)
+		else:
+			recent_rows.append(meta)
+	var signature := "|".join(signature_parts)
+	if not force and signature == _sessions_signature:
+		return
+	_sessions_signature = signature
 	for child in _session_list.get_children():
 		child.queue_free()
-	var active_path := session.path if session != null else StringUtils.EMPTY
-	var sessions := workspace_host.session_list()
-	for meta in sessions:
-		_session_list.add_child(build_session_row(meta, str(meta.get("path", "")) == active_path))
-	if sessions.is_empty():
+	if not pinned_rows.is_empty():
+		add_session_header(T.t("gai_pi.session.pinned"))
+		for meta in pinned_rows:
+			_session_list.add_child(build_session_row(meta, str(meta.get("path", "")) == active_path, true))
+	if not recent_rows.is_empty():
+		if not pinned_rows.is_empty():
+			add_session_header(T.t("gai_pi.session.recent"))
+		for meta in recent_rows:
+			_session_list.add_child(build_session_row(meta, str(meta.get("path", "")) == active_path, false))
+	if pinned_rows.is_empty() and recent_rows.is_empty():
 		var empty := Label.new()
 		empty.text = T.t("gai_pi.sidebar.empty")
 		empty.add_theme_font_override("font", Fonts.code())
@@ -838,7 +1134,33 @@ func refresh_sessions() -> void:
 		_session_list.add_child(empty)
 
 
-func build_session_row(meta: Dictionary, is_active: bool) -> Control:
+func add_session_header(text: String) -> void:
+	var header := Label.new()
+	header.text = text
+	header.add_theme_font_override("font", Fonts.semibold())
+	header.add_theme_font_size_override("font_size", Typography.body_small - 1)
+	header.add_theme_color_override("font_color", ThemeColor.body_color.darkened(0.15))
+	header.custom_minimum_size = Vector2(0, 22)
+	header.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+	_session_list.add_child(header)
+
+
+func style_sidebar_field(control: LineEdit) -> void:
+	control.add_theme_color_override("font_color", ThemeColor.title_color)
+	control.add_theme_color_override("font_placeholder_color", ThemeColor.body_color.darkened(0.2))
+	control.add_theme_color_override("caret_color", ThemeColor.theme_color)
+	for state: String in ["normal", "focus", "read_only"]:
+		var style := StyleBoxFlat.new()
+		style.bg_color = Colors.DARK_CONTROL_SURFACE
+		style.border_color = ThemeColor.theme_color if state == "focus" else Colors.DARK_OUTLINE_VARIANT
+		style.set_border_width_all(1)
+		style.set_corner_radius_all(8)
+		style.content_margin_left = Margin.ma_2
+		style.content_margin_right = Margin.ma_2
+		control.add_theme_stylebox_override(state, style)
+
+
+func build_session_row(meta: Dictionary, is_active: bool, pinned: bool = false) -> Control:
 	var path := str(meta.get("path", StringUtils.EMPTY))
 	var button := Button.new()
 	button.flat = true
@@ -861,7 +1183,13 @@ func build_session_row(meta: Dictionary, is_active: bool) -> Control:
 		if workspace_host.is_streaming:
 			show_status(T.t("gai_pi.status.switch_while_running"))
 			return
+		_sidebar_status.text = T.t("gai_pi.sidebar.switching")
 		workspace_host.switch_session(path)
+	)
+	button.gui_input.connect(func(event: InputEvent) -> void:
+		var mouse := event as InputEventMouseButton
+		if mouse != null and mouse.pressed and mouse.button_index == MOUSE_BUTTON_RIGHT:
+			show_session_menu(meta, pinned)
 	)
 
 	var column := VBoxContainer.new()
@@ -881,7 +1209,7 @@ func build_session_row(meta: Dictionary, is_active: bool) -> Control:
 	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	title.add_theme_font_override("font", Fonts.medium())
 	title.add_theme_font_size_override("font_size", Typography.body_medium)
-	title.add_theme_color_override("font_color", ThemeColor.title_color if is_active else ThemeColor.body_color)
+	title.add_theme_color_override("font_color", ThemeColor.theme_color if pinned else (ThemeColor.title_color if is_active else ThemeColor.body_color))
 	title.mouse_filter = MOUSE_FILTER_IGNORE
 	column.add_child(title)
 
@@ -914,6 +1242,8 @@ func apply_locale() -> void:
 	if _workspace_dialog != null:
 		_workspace_dialog.title = T.t("gai_pi.topbar.switch_workspace")
 	_new_session_button.text = T.t("gai_pi.sidebar.new")
+	if _session_search != null:
+		_session_search.placeholder_text = T.t("gai_pi.session.search_placeholder")
 	_stop_button.text = T.t("gai_pi.composer.stop")
 	_stop_button.tooltip_text = T.t("gai_pi.composer.stop_tooltip")
 	var streaming := workspace_host != null and workspace_host.is_streaming
@@ -923,12 +1253,16 @@ func apply_locale() -> void:
 	if workspace_host != null and not workspace_host.is_ready and not _sidebar_failed:
 		_sidebar_status.text = T.t("gai_pi.sidebar.starting")
 	refresh_visual_picker()
+	refresh_sessions(true)
 	update_empty_state()
 	render_usage()
 	on_state_changed()
 	for bubble in _bubbles.values():
 		if is_instance_valid(bubble):
 			bubble.refresh()
+	update_load_earlier()
+	if _prompt != null and _prompt.visible:
+		return
 	if _dialogs != null and _dialogs.is_open():
 		_dialogs.rebuild()
 

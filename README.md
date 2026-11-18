@@ -67,7 +67,10 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 | 换行 | `Shift+Enter` |
 | 运行中插话 | 直接发送：默认 `steer`（本回合工具跑完后插入），可在设置里改成 `followUp` |
 | 停止 | 输入框右侧「停止」 |
-| 切换/新建会话 | 左侧栏 |
+| 切换/新建会话 | 左侧栏；搜索框过滤 |
+| 置顶 / 重命名 / 删除会话 | 右键会话行（重命名只对当前会话，删除会二次确认） |
+| 复制 / 放回输入框 | 鼠标悬停气泡，右上角 ⧉ 与 ↩ |
+| 撤销一次文件修改 | `edit`/`write` 气泡下方的「↶ 撤销这次文件修改」 |
 | 选模型 / thinking | 右上角 |
 | 切换界面语言 | 右上角 `中` / `EN`，立即生效并记住 |
 | 换视觉场景 | 右上角下拉（60 个） |
@@ -90,12 +93,13 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 ## 现在能做什么，不能做什么
 
 已完成：启动握手、流式文本与思考、工具气泡（含 `edit` 内联 diff）、运行/停止、
-steer 队列、会话列表与切换、模型与 thinking 切换、上下文压缩事件、扩展弹窗
-（`confirm`/`select`/`input`/`editor`）与 `notify`、60 个视觉场景、多工作目录、
-中英双语与运行时切换（含 60 个视觉场景的文案）。
+steer 队列、会话搜索/置顶/重命名/删除、模型与 thinking 切换、上下文压缩事件、扩展弹窗
+（`confirm`/`select`/`input`/`editor`）与 `notify`、单文件修改撤销、60 个视觉场景
+（切换即预览）、多工作目录、中英双语与运行时切换。
 
-未完成（详见 [ARCHITECTURE.md](ARCHITECTURE.md#八边界与已知不足)）：扩展状态栏/挂件、
-Git 检查点回滚、图片粘贴、编辑器面板、并发多会话、打包分发。
+未完成（详见 [ARCHITECTURE.md](ARCHITECTURE.md#九边界与已知不足)）：编辑器面板、
+整轮检查点回滚（仅做了单文件撤销）、图片粘贴、扩展状态栏/挂件、并发多会话、
+聊天记录搜索、主题切换、打包分发。
 
 ## 文档
 

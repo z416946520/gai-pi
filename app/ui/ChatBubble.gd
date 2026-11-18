@@ -8,9 +8,13 @@ extends PanelContainer
 ## stream cannot re-parse markdown on every token.
 
 signal expand_toggled
+signal copy_requested(entry: ChatEntry)
+signal prefill_requested(entry: ChatEntry)
+signal restore_requested(entry: ChatEntry)
 
 const COLLAPSED_LINES := 14
-const STREAMING_COLLAPSED_LINES := 400
+const STREAMING_COLLAPSED_LINES := 80
+const NEWLINE := "\n"
 
 const COLOR_ADDED := Color("#7ddc9a")
 const COLOR_REMOVED := Color("#ff8f8f")
@@ -26,6 +30,9 @@ var _meta: Label = null
 var _body: RichTextLabel = null
 var _expand_button: Button = null
 var _header: HBoxContainer = null
+var _actions: HBoxContainer = null
+var _restore_button: Button = null
+var _hovered: bool = false
 
 
 func setup(target: ChatEntry) -> void:
@@ -70,6 +77,11 @@ func _build() -> void:
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_header.add_child(_title)
 
+	_actions = HBoxContainer.new()
+	_actions.add_theme_constant_override("separation", Margin.ma_1)
+	_actions.visible = false
+	_header.add_child(_actions)
+
 	_meta = Label.new()
 	_meta.add_theme_font_override("font", Fonts.code())
 	_meta.add_theme_font_size_override("font_size", Typography.body_small - 1)
@@ -107,6 +119,20 @@ func _build() -> void:
 	_expand_button.pressed.connect(on_expand_pressed)
 	column.add_child(_expand_button)
 
+	_restore_button = Button.new()
+	_restore_button.flat = true
+	_restore_button.focus_mode = FOCUS_NONE
+	_restore_button.add_theme_font_override("font", Fonts.code())
+	_restore_button.add_theme_font_size_override("font_size", Typography.body_small - 1)
+	_restore_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_restore_button.add_theme_color_override("font_color", Color("#ffd479"))
+	_restore_button.visible = false
+	_restore_button.pressed.connect(func() -> void: restore_requested.emit(entry))
+	column.add_child(_restore_button)
+
+	mouse_entered.connect(on_hover_changed.bind(true))
+	mouse_exited.connect(on_hover_changed.bind(false))
+
 	var background := StyleBoxFlat.new()
 	background.bg_color = ThemeColor.card_surface
 	background.set_corner_radius_all(10)
@@ -121,6 +147,7 @@ func refresh() -> void:
 	if entry == null:
 		return
 	dirty = false
+	rebuild_actions()
 	var is_user := entry.kind == ChatEntry.KIND_USER
 	var accent := accent_for_kind(entry.kind)
 	_badge.text = badge_for_kind(entry.kind)
@@ -131,6 +158,46 @@ func refresh() -> void:
 	_meta.visible = not _meta.text.is_empty()
 	apply_body()
 	apply_background(is_user, accent)
+
+
+## Hover actions: copy the body, put it back in the composer, or undo a file change.
+func rebuild_actions() -> void:
+	if _actions == null:
+		return
+	for child in _actions.get_children():
+		child.queue_free()
+	if entry == null:
+		return
+	if not entry.body.is_empty():
+		_actions.add_child(action_button("⧉", T.t("gai_pi.chat.copy"), func() -> void: copy_requested.emit(entry)))
+		if entry.kind == ChatEntry.KIND_USER or entry.kind == ChatEntry.KIND_AGENT:
+			_actions.add_child(action_button("↩", T.t("gai_pi.chat.resend"), func() -> void: prefill_requested.emit(entry)))
+	if _restore_button != null:
+		var can_restore := entry.details.has("restore") and not entry.details.has("restored")
+		_restore_button.visible = can_restore
+		_restore_button.text = T.t("gai_pi.chat.undo_edit")
+	_actions.visible = _hovered and _actions.get_child_count() > 0
+
+
+func action_button(glyph: String, tooltip: String, action: Callable) -> Button:
+	var button := Button.new()
+	button.text = glyph
+	button.flat = true
+	button.focus_mode = FOCUS_NONE
+	button.tooltip_text = tooltip
+	button.custom_minimum_size = Vector2(22, 20)
+	button.add_theme_font_override("font", Fonts.code())
+	button.add_theme_font_size_override("font_size", Typography.body_small)
+	button.add_theme_color_override("font_color", ThemeColor.body_color)
+	button.add_theme_color_override("font_hover_color", ThemeColor.theme_color)
+	button.pressed.connect(action)
+	return button
+
+
+func on_hover_changed(hovered: bool) -> void:
+	_hovered = hovered
+	if _actions != null:
+		_actions.visible = hovered and _actions.get_child_count() > 0
 
 
 func header_text() -> String:
@@ -164,6 +231,8 @@ func localized_title() -> String:
 
 
 func meta_text() -> String:
+	if entry.details.has("restored"):
+		return T.t("gai_pi.chat.restored")
 	if entry.running:
 		return T.t("gai_pi.bubble.running")
 	if entry.is_error:
@@ -179,6 +248,13 @@ func apply_body() -> void:
 	if text.is_empty():
 		_body.visible = false
 		_expand_button.visible = false
+		return
+	# Thinking is collapsed to its header by default: long reasoning blocks are the most
+	# expensive bubbles to lay out and the least useful while skimming a restored session.
+	if entry.kind == ChatEntry.KIND_THINKING and not expanded:
+		_body.visible = false
+		_expand_button.visible = true
+		_expand_button.text = T.t("gai_pi.bubble.expand_thinking", [text.count(NEWLINE) + 1])
 		return
 	_body.visible = true
 	var diff := str(entry.details.get("diff", StringUtils.EMPTY))

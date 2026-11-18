@@ -527,7 +527,9 @@
       "new": "＋  新会话",
       "untitled": "新会话",
       "empty": "还没有会话",
-      "starting": "正在启动 pi…"
+      "starting": "正在启动 pi…",
+      "loading": "正在载入 {} 条…",
+      "switching": "正在切换会话…"
     },
     "composer": {
       "placeholder": "让 pi 读代码、改代码，或者跑一遍验证…",
@@ -552,12 +554,15 @@
       "lines": "{} 行",
       "more": "还有 {} 行",
       "collapse": "收起",
-      "session": "会话"
+      "session": "会话",
+      "expand_thinking": "展开思考（{} 行）"
     },
     "status": {
       "switch_while_running": "先停止本轮运行，再切换会话",
       "new_while_running": "先停止本轮运行，再新建会话",
-      "models_failed": "拿不到模型列表"
+      "models_failed": "拿不到模型列表",
+      "rename_active_only": "先切换到该会话再重命名",
+      "delete_while_running": "先停止本轮运行再删除会话"
     },
     "dialog": {
       "allow": "允许",
@@ -594,7 +599,26 @@
     "chat": {
       "retrying": "重试中（{}/{}）：{}",
       "retry_failed": "重试失败：{}",
-      "compact_failed": "上下文压缩失败"
+      "compact_failed": "上下文压缩失败",
+      "load_earlier": "载入更早 {} 条（共隐藏 {} 条）",
+      "copy": "复制",
+      "resend": "放回输入框",
+      "copied": "已复制",
+      "undo_edit": "↶ 撤销这次文件修改",
+      "restored": "已撤销",
+      "restore_failed": "恢复文件失败"
+    },
+    "session": {
+      "pinned": "置顶",
+      "recent": "最近",
+      "search_placeholder": "搜索会话…",
+      "rename": "重命名",
+      "pin": "置顶",
+      "unpin": "取消置顶",
+      "delete": "删除会话",
+      "delete_title": "删除这个会话？",
+      "delete_message": "会话文件会被永久删除。",
+      "rename_placeholder": "会话名称"
     }
   }
 }

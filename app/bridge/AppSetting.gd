@@ -15,6 +15,7 @@ const KEY_PI_NODE := "pi_node"
 const KEY_PI_CLI := "pi_cli"
 const KEY_STEERING := "steering"
 const KEY_AUTO_SCROLL := "auto_scroll"
+const KEY_PINS := "session_pins"
 
 static var _config: ConfigFile = null
 

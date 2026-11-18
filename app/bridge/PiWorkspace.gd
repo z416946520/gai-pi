@@ -39,6 +39,8 @@ var _state_requested_at: int = 0
 var _needs_entries: bool = true
 var _last_command_error: String = StringUtils.EMPTY
 var _boot_started_at: int = 0
+var _switch_started_at: int = 0
+var _entries_started_at: int = 0
 
 
 func _init(workspace_path: String) -> void:
@@ -126,17 +128,17 @@ func new_session() -> void:
 func switch_session(session_path: String) -> void:
 	if not ensure_client() or session_path.is_empty():
 		return
+	_switch_started_at = Time.get_ticks_msec()
 	var on_result := func(result: Dictionary) -> void:
 		if not bool(result.get("success", false)):
 			report_error(str(result.get("error", T.t("gai_pi.bridge.switch_failed"))))
 			return
+		timing("switch_session", _switch_started_at)
 		var data := PiSession.as_dictionary(result.get("data", {}))
 		if bool(data.get("cancelled", false)):
 			report_error(T.t("gai_pi.bridge.switch_cancelled"))
 			return
-		_needs_entries = true
-		if session != null:
-			session.path = session_path
+		load_session_file(session_path)
 		request_state()
 	client.request("switch_session", {"sessionPath": session_path}, on_result)
 
@@ -237,6 +239,7 @@ func on_state(result: Dictionary) -> void:
 	var first_time := session == null
 	if first_time:
 		session = PiSession.new()
+		session.workspace_root = workspace
 		session.local_id = _next_local_id
 		_next_local_id += 1
 		session.running = is_streaming
@@ -258,20 +261,40 @@ func on_state(result: Dictionary) -> void:
 	if _needs_entries:
 		_needs_entries = false
 		load_entries()
-	else:
-		session_loaded.emit(session)
+
+
+## Renders a session from its file; the model context still comes from pi.
+func load_session_file(session_path: String) -> void:
+	if session == null:
+		return
+	session.path = session_path
+	session.pi_id = PiSessionIndex.id_from_path(session_path)
+	var started := Time.get_ticks_msec()
+	session.rebuild(PiSessionIndex.load_branch_entries(session_path))
+	_needs_entries = false
+	timing("file_rebuild", started)
+	session_loaded.emit(session)
 
 
 func load_entries() -> void:
 	if client == null or session == null:
 		return
+	_entries_started_at = Time.get_ticks_msec()
 	var on_result := func(result: Dictionary) -> void:
 		if not bool(result.get("success", false)):
 			return
+		timing("get_entries", _entries_started_at)
 		var data := PiSession.as_dictionary(result.get("data", {}))
 		session.rebuild(PiSession.as_array(data.get("entries", [])))
+		timing("rebuild", _entries_started_at)
 		session_loaded.emit(session)
-	client.request("get_entries", {}, on_result)
+	client.request("get_entries", {}, on_result, 120000)
+
+
+## Logs a phase duration when GAI_PI_TIMING=1, used while tuning session switching.
+func timing(label: String, started_at: int) -> void:
+	if OS.get_environment("GAI_PI_TIMING") == "1":
+		print("[timing] ", label, " ", Time.get_ticks_msec() - started_at, "ms")
 
 
 func on_event(data: Dictionary) -> void:

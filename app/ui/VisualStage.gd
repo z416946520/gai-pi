@@ -205,7 +205,14 @@ static func create_effect(visual_type: Type) -> VisualEffect:
 	return null
 
 
+## Preview run id; effects only use session ids as opaque keys.
+const PREVIEW_SESSION_ID := -1
+const PREVIEW_SECONDS := 2.6
+
 var current_effect: VisualEffect = null
+
+var _preview_token: int = 0
+var _preview_active: bool = false
 
 
 func _ready() -> void:
@@ -240,32 +247,83 @@ static func localized_name(type_index: int) -> String:
 	return translated if translated != key else names[type_index].capitalize()
 
 
+## Applies a picker selection: persists it and swaps the live effect immediately.
+## With no run in flight the effect plays a short preview so the choice is visible at once.
+func apply_visual_type(type_index: int) -> void:
+	AppSetting.set_int(AppSetting.KEY_VISUAL, type_index)
+	rebuild_effect(true)
+
+
+func rebuild_effect(preview: bool) -> void:
+	_preview_token += 1
+	_preview_active = false
+	if current_effect != null:
+		current_effect.queue_free()
+		current_effect = null
+	var visual_type := AppSetting.get_int(AppSetting.KEY_VISUAL, Type.NONE) as Type
+	if visual_type == Type.NONE:
+		return
+	var effect := create_effect(visual_type)
+	if effect == null:
+		effect = create_effect(Type.RANDOM)
+	if effect == null:
+		return
+	current_effect = effect
+	add_child(effect)
+	effect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if RuntimeManager.is_active():
+		effect.on_agent_start(active_session_id())
+		effect.set_visual_visible(true, true)
+	elif preview:
+		start_preview(effect)
+
+
 func prepare_effect() -> VisualEffect:
 	if current_effect != null:
 		if current_effect.visible:
 			return current_effect
 		current_effect.queue_free()
 		current_effect = null
-	var visual_type := AppSetting.get_int(AppSetting.KEY_VISUAL, Type.NONE) as Type
-	if visual_type == Type.NONE:
-		return null
-	var effect := create_effect(visual_type)
-	if effect == null:
-		effect = create_effect(Type.RANDOM)
-	if effect == null:
-		return null
-	current_effect = effect
-	add_child(effect)
-	effect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	rebuild_effect(false)
 	return current_effect
 
 
 func on_agent_start(session_id: int) -> void:
+	_preview_token += 1
+	if _preview_active:
+		# A real run needs a fresh effect bound to its own session id.
+		_preview_active = false
+		rebuild_effect(false)
 	var effect := prepare_effect()
 	if effect == null or effect.visible:
 		return
 	effect.on_agent_start(session_id)
 	effect.set_visual_visible(true, true)
+
+
+## Short self-contained animation so "switch visual" has visible feedback while idle.
+func start_preview(effect: VisualEffect) -> void:
+	_preview_active = true
+	var token := _preview_token
+	effect.on_agent_start(PREVIEW_SESSION_ID)
+	effect.set_visual_visible(true, true)
+	effect.on_turn_start(PREVIEW_SESSION_ID)
+	effect.on_message_update(PREVIEW_SESSION_ID, "gai-pi preview", OpenAiClient.STREAM_KIND_CONTENT)
+	get_tree().create_timer(PREVIEW_SECONDS).timeout.connect(func() -> void:
+		if token != _preview_token or not is_instance_valid(effect) or not _preview_active:
+			return
+		if RuntimeManager.is_active():
+			return
+		_preview_active = false
+		effect.on_agent_end(PREVIEW_SESSION_ID, StringUtils.EMPTY)
+		effect.set_visual_visible(false, true)
+	)
+
+
+func active_session_id() -> int:
+	for session_id: int in RuntimeManager.runtimes:
+		return session_id
+	return PREVIEW_SESSION_ID
 
 
 func on_agent_end(session_id: int, error_message: String) -> void:

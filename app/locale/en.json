@@ -527,7 +527,9 @@
       "new": "＋  New session",
       "untitled": "New session",
       "empty": "No sessions yet",
-      "starting": "starting pi…"
+      "starting": "starting pi…",
+      "loading": "Loading {} entries…",
+      "switching": "Switching session…"
     },
     "composer": {
       "placeholder": "Ask pi to read, change, or verify something…",
@@ -552,12 +554,15 @@
       "lines": "{} lines",
       "more": "{} more lines",
       "collapse": "collapse",
-      "session": "Session"
+      "session": "Session",
+      "expand_thinking": "Show thinking ({} lines)"
     },
     "status": {
       "switch_while_running": "Stop the running turn before switching sessions",
       "new_while_running": "Stop the running turn before starting a new session",
-      "models_failed": "Could not list models"
+      "models_failed": "Could not list models",
+      "rename_active_only": "Switch to this session before renaming it",
+      "delete_while_running": "Stop the running turn before deleting a session"
     },
     "dialog": {
       "allow": "Allow",
@@ -594,7 +599,26 @@
     "chat": {
       "retrying": "Retrying ({}/{}): {}",
       "retry_failed": "Retry failed: {}",
-      "compact_failed": "Compaction failed"
+      "compact_failed": "Compaction failed",
+      "load_earlier": "Load {} earlier ({} hidden)",
+      "copy": "Copy",
+      "resend": "Edit in composer",
+      "copied": "Copied",
+      "undo_edit": "↶ Undo this file edit",
+      "restored": "reverted",
+      "restore_failed": "Could not restore the file"
+    },
+    "session": {
+      "pinned": "Pinned",
+      "recent": "Recent",
+      "search_placeholder": "Search sessions…",
+      "rename": "Rename",
+      "pin": "Pin to top",
+      "unpin": "Unpin",
+      "delete": "Delete session",
+      "delete_title": "Delete this session?",
+      "delete_message": "The session file is removed permanently.",
+      "rename_placeholder": "Session name"
     }
   }
 }

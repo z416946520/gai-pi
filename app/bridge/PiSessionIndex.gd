@@ -10,6 +10,24 @@ extends Object
 const HEAD_BYTES := 65536
 const TAIL_BYTES := 32768
 const PREVIEW_LENGTH := 60
+## Sessions above this size are read from their tail only; the display window is far smaller.
+const MAX_BRANCH_BYTES := 24 * 1024 * 1024
+## Written as a constant because the file format is line-oriented JSONL.
+const NEWLINE := "\n"
+
+## Per-file metadata cache keyed by path; a file is re-read only when mtime or size changes.
+class CachedMeta:
+	var modified: int
+	var size: int
+	var meta: Dictionary
+
+	func _init(file_modified: int, file_size: int, file_meta: Dictionary) -> void:
+		modified = file_modified
+		size = file_size
+		meta = file_meta
+
+
+static var _cache: Dictionary[String, CachedMeta] = {}
 
 
 static func list_for_workspace(workspace: String) -> Array[Dictionary]:
@@ -22,15 +40,45 @@ static func list_for_workspace(workspace: String) -> Array[Dictionary]:
 	var file_name := dir.get_next()
 	while not file_name.is_empty():
 		if not dir.current_is_dir() and file_name.ends_with(".jsonl"):
-			var meta := read_meta(folder.path_join(file_name))
+			var path := folder.path_join(file_name)
+			var meta := cached_meta(path)
 			if not meta.is_empty():
-				result.append(meta)
+				result.append(meta.duplicate(true))
 		file_name = dir.get_next()
 	dir.list_dir_end()
 	result.sort_custom(func(left: Dictionary, right: Dictionary) -> bool:
 		return int(left.get("modified", 0)) > int(right.get("modified", 0))
 	)
 	return result
+
+
+## Cached variant of [method read_meta]; stat is cheap, parsing 96 KB per session is not.
+static func cached_meta(path: String) -> Dictionary:
+	var modified := int(FileAccess.get_modified_time(path))
+	var probe := FileAccess.open(path, FileAccess.READ)
+	if probe == null:
+		return {}
+	var size := probe.get_length()
+	probe.close()
+	var cached: CachedMeta = _cache.get(path)
+	if cached != null and cached.modified == modified and cached.size == size:
+		return cached.meta
+	var meta := read_meta(path)
+	if meta.is_empty():
+		return {}
+	_cache[path] = CachedMeta.new(modified, size, meta)
+	return meta
+
+
+## Drops cache entries for files that no longer exist.
+static func prune_cache() -> void:
+	for path: String in _cache.keys():
+		if not FileAccess.file_exists(path):
+			_cache.erase(path)
+
+
+static func invalidate(path: String) -> void:
+	_cache.erase(path)
 
 
 static func read_meta(path: String) -> Dictionary:
@@ -103,6 +151,72 @@ static func read_meta(path: String) -> Dictionary:
 		# The shell supplies a translated placeholder when both stay empty.
 		meta["title"] = first_user if not first_user.is_empty() else last_text
 	return meta
+
+
+## Rebuilds the active branch (leaf to root) straight from the session file.
+##
+## This is the display path used when switching sessions: pi's `get_entries` serializes the
+## whole session tree over the RPC pipe, which costs seconds on long sessions, while the file
+## already holds the same entries and is local.
+static func load_branch_entries(path: String) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return result
+	var size := file.get_length()
+	var text := StringUtils.EMPTY
+	if size > MAX_BRANCH_BYTES:
+		var start := size - MAX_BRANCH_BYTES
+		file.seek(start)
+		text = file.get_buffer(size - start).get_string_from_utf8()
+		# The first line of a tail read is almost certainly partial.
+		var first_break := text.find(NEWLINE)
+		text = text.substr(first_break + 1) if first_break >= 0 else StringUtils.EMPTY
+	else:
+		text = file.get_as_text()
+	file.close()
+
+	var ordered: Array[Dictionary] = []
+	var by_id: Dictionary[String, Dictionary] = {}
+	for line in text.split(NEWLINE):
+		var entry := _parse(line)
+		if entry.is_empty():
+			continue
+		if str(entry.get("type", StringUtils.EMPTY)) == "session":
+			continue
+		ordered.append(entry)
+		var entry_id := str(entry.get("id", StringUtils.EMPTY))
+		if not entry_id.is_empty():
+			by_id[entry_id] = entry
+	if ordered.is_empty():
+		return result
+
+	# Linear sessions (v1 files, or entries without ids) keep append order.
+	if by_id.is_empty():
+		return ordered
+
+	var leaf_id := str(ordered[ordered.size() - 1].get("id", StringUtils.EMPTY))
+	if leaf_id.is_empty():
+		return ordered
+	var chain: Array[Dictionary] = []
+	var visited: Dictionary[String, bool] = {}
+	var cursor := leaf_id
+	while not cursor.is_empty() and by_id.has(cursor) and not visited.has(cursor):
+		visited[cursor] = true
+		var entry: Dictionary = by_id[cursor]
+		chain.append(entry)
+		var parent: Variant = entry.get("parentId")
+		cursor = str(parent) if parent != null else StringUtils.EMPTY
+	if chain.is_empty():
+		return ordered
+	chain.reverse()
+	return chain
+
+
+static func id_from_path(path: String) -> String:
+	var stem := path.get_file().get_basename()
+	var parts := stem.split("_")
+	return parts[parts.size() - 1] if parts.size() > 0 else StringUtils.EMPTY
 
 
 static func path_for_id(workspace: String, session_id: String) -> String:

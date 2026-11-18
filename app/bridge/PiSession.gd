@@ -24,11 +24,17 @@ var usage: OpenAiUsage = OpenAiUsage.new()
 var steering_queue: Array[String] = []
 var follow_up_queue: Array[String] = []
 var last_user_text: String = StringUtils.EMPTY
+## Absolute workspace root, used to resolve relative tool paths for file snapshots.
+var workspace_root: String = StringUtils.EMPTY
 
 var _agent_entry: ChatEntry = null
 var _thinking_entry: ChatEntry = null
 var _tool_entries: Dictionary[String, ChatEntry] = {}
 var _message_index: int = 0
+## Set while replaying a session so the UI is not asked to build every historical bubble.
+var _bulk: bool = false
+## Pre-edit file contents keyed by tool call id, so a single edit can be undone.
+var _snapshots: Dictionary[String, Dictionary] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -206,9 +212,12 @@ func on_message_end(data: Dictionary) -> void:
 func on_tool_start(data: Dictionary) -> void:
 	var tool_name := str(data.get("toolName", StringUtils.EMPTY))
 	var args: Dictionary = as_dictionary(data.get("args", {}))
-	var entry := ensure_tool_entry(str(data.get("toolCallId", StringUtils.EMPTY)), tool_name, args)
+	var tool_call_id := str(data.get("toolCallId", StringUtils.EMPTY))
+	capture_snapshot(tool_call_id, tool_name, args)
+	var entry := ensure_tool_entry(tool_call_id, tool_name, args)
 	entry.running = true
-	entry.body = PiSession.args_body(args)
+	if entry.body.is_empty():
+		entry.body = PiSession.args_body(args)
 	entry_updated.emit(entry, "content")
 	PiEvents.events.tool_execution_start.emit(local_id, entry.tool_call_id, tool_name, args.duplicate())
 
@@ -236,6 +245,8 @@ func on_tool_end(data: Dictionary) -> void:
 	entry.is_error = is_error
 	entry.body = text
 	apply_result_details(entry, result)
+	if _snapshots.has(entry.tool_call_id):
+		entry.details["restore"] = "1"
 	entry_updated.emit(entry, "content")
 	var tool_result := AgentToolResult.new(text, is_error, entry.details.duplicate())
 	PiEvents.events.tool_execution_end.emit(local_id, entry.tool_call_id, tool_name, tool_result)
@@ -288,6 +299,7 @@ func on_compaction_end(data: Dictionary) -> void:
 
 ## Rebuilds the transcript from `get_entries` output (append order, active-branch agnostic).
 func rebuild(raw_entries: Array) -> void:
+	_bulk = true
 	entries.clear()
 	_agent_entry = null
 	_thinking_entry = null
@@ -307,6 +319,7 @@ func rebuild(raw_entries: Array) -> void:
 				append_entry(summary)
 			_:
 				pass
+	_bulk = false
 	state_changed.emit()
 
 
@@ -376,6 +389,8 @@ func add_error_entry(text: String) -> void:
 
 func append_entry(entry: ChatEntry) -> void:
 	entries.append(entry)
+	if _bulk:
+		return
 	entry_added.emit(entry)
 	PiEvents.events.chat_entry_add.emit(local_id, entry)
 
@@ -406,7 +421,6 @@ func ensure_tool_entry(tool_call_id: String, tool_name: String, args: Dictionary
 	var existing: ChatEntry = _tool_entries.get(tool_call_id)
 	if existing != null:
 		if not args.is_empty():
-			existing.details["args"] = PiSession.args_body(args)
 			var summary := ToolVisualDisplay.args_summary(tool_name, args)
 			if not summary.is_empty():
 				existing.details["summary"] = summary
@@ -417,7 +431,6 @@ func ensure_tool_entry(tool_call_id: String, tool_name: String, args: Dictionary
 	entry.tool_name = tool_name
 	entry.running = true
 	entry.details["summary"] = ToolVisualDisplay.args_summary(tool_name, args)
-	entry.details["args"] = PiSession.args_body(args)
 	_tool_entries[tool_call_id] = entry
 	append_entry(entry)
 	return entry
@@ -439,6 +452,61 @@ func update_usage(value: Variant) -> void:
 	usage.total_tokens = int(data.get("totalTokens", usage.total_tokens))
 	usage_changed.emit(usage)
 	PiEvents.events.usage_changed.emit(local_id, usage)
+
+
+## Remembers the file before pi edits it; only the first snapshot per call is kept.
+func capture_snapshot(tool_call_id: String, tool_name: String, args: Dictionary) -> void:
+	if tool_name != "edit" and tool_name != "write":
+		return
+	if tool_call_id.is_empty() or _snapshots.has(tool_call_id):
+		return
+	var raw_path := str(args.get("path", StringUtils.EMPTY))
+	if raw_path.is_empty():
+		return
+	var path := resolve_path(raw_path)
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		# The tool is about to create it: undoing means deleting it again.
+		_snapshots[tool_call_id] = {"path": path, "existed": false, "content": StringUtils.EMPTY}
+		return
+	var size := file.get_length()
+	if size > 4 * 1024 * 1024:
+		file.close()
+		return
+	var content := file.get_as_text()
+	file.close()
+	_snapshots[tool_call_id] = {"path": path, "existed": true, "content": content}
+
+
+func resolve_path(raw: String) -> String:
+	if raw.is_absolute_path() or workspace_root.is_empty():
+		return raw
+	return workspace_root.path_join(raw)
+
+
+## Writes the pre-edit content back. Returns a user-facing error, or "" on success.
+func restore_snapshot(tool_call_id: String) -> String:
+	var snapshot: Dictionary = _snapshots.get(tool_call_id, {})
+	if snapshot.is_empty():
+		return T.t("gai_pi.chat.restore_failed")
+	var path := str(snapshot.get("path", StringUtils.EMPTY))
+	if path.is_empty():
+		return T.t("gai_pi.chat.restore_failed")
+	if bool(snapshot.get("existed", false)):
+		var file := FileAccess.open(path, FileAccess.WRITE)
+		if file == null:
+			return T.t("gai_pi.chat.restore_failed")
+		file.store_string(str(snapshot.get("content", StringUtils.EMPTY)))
+		file.close()
+	elif FileAccess.file_exists(path):
+		if DirAccess.remove_absolute(path) != OK:
+			return T.t("gai_pi.chat.restore_failed")
+	var entry: ChatEntry = _tool_entries.get(tool_call_id)
+	if entry != null:
+		entry.details["restored"] = "1"
+		entry.details.erase("restore")
+		entry_updated.emit(entry, "content")
+	return StringUtils.EMPTY
 
 
 func apply_result_details(entry: ChatEntry, result: Dictionary) -> void:
