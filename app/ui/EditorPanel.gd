@@ -25,6 +25,10 @@ var _preview_host: Control = null
 var _preview_scroll: ScrollContainer = null
 var _reference_button: Button = null
 var _current_path: String = StringUtils.EMPTY
+var _tabs: TabBar = null
+var _open_files: Array[String] = []
+## Set while the tab bar is being synced, so programmatic changes do not re-enter.
+var _syncing_tabs: bool = false
 var _items_added: int = 0
 
 
@@ -40,6 +44,7 @@ func is_built() -> bool:
 func set_workspace(workspace_path: String) -> void:
 	workspace = workspace_path
 	if _tree != null:
+		close_all_tabs()
 		reload()
 
 
@@ -108,6 +113,24 @@ func _build() -> void:
 	_tree.allow_reselect = true
 	_tree.add_theme_font_override("font", Fonts.regular())
 	_tree.add_theme_font_size_override("font_size", Typography.body_small)
+	_tree.add_theme_color_override("font_color", ThemeColor.title_color)
+	_tree.add_theme_color_override("font_selected_color", ThemeColor.title_color)
+	_tree.add_theme_color_override("font_hovered_color", ThemeColor.theme_color)
+	_tree.add_theme_color_override("guide_color", AppTheme.outline())
+	var tree_panel := StyleBoxFlat.new()
+	tree_panel.bg_color = AppTheme.background()
+	tree_panel.set_corner_radius_all(6)
+	tree_panel.content_margin_left = Margin.ma_1
+	tree_panel.content_margin_right = Margin.ma_1
+	tree_panel.content_margin_top = Margin.ma_1
+	tree_panel.content_margin_bottom = Margin.ma_1
+	_tree.add_theme_stylebox_override("panel", tree_panel)
+	_tree.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	var tree_selected := StyleBoxFlat.new()
+	tree_selected.bg_color = ThemeColor.mix_with_theme_color(AppTheme.control_surface(), 0.45)
+	tree_selected.set_corner_radius_all(4)
+	_tree.add_theme_stylebox_override("selected", tree_selected)
+	_tree.add_theme_stylebox_override("selected_focus", tree_selected)
 	_tree.item_selected.connect(on_item_selected)
 	_tree.item_activated.connect(on_item_selected)
 	split.add_child(_tree)
@@ -116,6 +139,27 @@ func _build() -> void:
 	preview_column.size_flags_horizontal = SIZE_EXPAND_FILL
 	preview_column.add_theme_constant_override("separation", Margin.ma_1)
 	split.add_child(preview_column)
+
+	_tabs = TabBar.new()
+	_tabs.clip_tabs = true
+	_tabs.tab_close_display_policy = TabBar.CLOSE_BUTTON_SHOW_ALWAYS
+	_tabs.add_theme_font_override("font", Fonts.regular())
+	_tabs.add_theme_font_size_override("font_size", Typography.body_small)
+	_tabs.add_theme_color_override("font_selected_color", ThemeColor.title_color)
+	_tabs.add_theme_color_override("font_unselected_color", ThemeColor.body_color)
+	_tabs.add_theme_color_override("font_hovered_color", ThemeColor.title_color)
+	for state: String in ["tab_selected", "tab_unselected", "tab_hovered"]:
+		var tab_style := StyleBoxFlat.new()
+		tab_style.bg_color = AppTheme.control_surface() if state != "tab_unselected" else Color(0, 0, 0, 0)
+		tab_style.set_corner_radius_all(6)
+		tab_style.content_margin_left = Margin.ma_2
+		tab_style.content_margin_right = Margin.ma_2
+		tab_style.content_margin_top = 2
+		tab_style.content_margin_bottom = 2
+		_tabs.add_theme_stylebox_override(state, tab_style)
+	_tabs.tab_selected.connect(on_tab_selected)
+	_tabs.tab_close_pressed.connect(on_tab_close)
+	preview_column.add_child(_tabs)
 
 	_preview_scroll = ScrollContainer.new()
 	_preview_scroll.size_flags_vertical = SIZE_EXPAND_FILL
@@ -134,6 +178,17 @@ func _build() -> void:
 	_reference_button.visible = false
 	_reference_button.add_theme_font_override("font", Fonts.regular())
 	_reference_button.add_theme_font_size_override("font_size", Typography.body_small)
+	var reference_style := StyleBoxFlat.new()
+	reference_style.bg_color = AppTheme.control_surface()
+	reference_style.set_corner_radius_all(6)
+	reference_style.content_margin_left = Margin.ma_2
+	reference_style.content_margin_right = Margin.ma_2
+	reference_style.content_margin_top = 2
+	reference_style.content_margin_bottom = 2
+	_reference_button.add_theme_stylebox_override("normal", reference_style)
+	_reference_button.add_theme_stylebox_override("hover", reference_style)
+	_reference_button.add_theme_stylebox_override("pressed", reference_style)
+	_reference_button.add_theme_color_override("font_color", ThemeColor.title_color)
 	_reference_button.pressed.connect(func() -> void:
 		if not _current_path.is_empty():
 			reference_requested.emit(_current_path)
@@ -213,6 +268,60 @@ func on_item_selected() -> void:
 # ---------------------------------------------------------------------------
 
 func show_file(path: String) -> void:
+	if path.is_empty():
+		return
+	if not _open_files.has(path):
+		_open_files.append(path)
+		_syncing_tabs = true
+		_tabs.add_tab(path.get_file())
+		_tabs.set_tab_tooltip(_open_files.size() - 1, relative_path(path))
+		_syncing_tabs = false
+	_syncing_tabs = true
+	_tabs.current_tab = _open_files.find(path)
+	_syncing_tabs = false
+	render_file(path)
+
+
+func on_tab_selected(index: int) -> void:
+	if _syncing_tabs or index < 0 or index >= _open_files.size():
+		return
+	render_file(_open_files[index])
+
+
+func on_tab_close(index: int) -> void:
+	if index < 0 or index >= _open_files.size():
+		return
+	_open_files.remove_at(index)
+	_syncing_tabs = true
+	_tabs.remove_tab(index)
+	_syncing_tabs = false
+	if _open_files.is_empty():
+		_current_path = StringUtils.EMPTY
+		_reference_button.visible = false
+		_clear_preview()
+		return
+	var next := clampi(index, 0, _open_files.size() - 1)
+	_syncing_tabs = true
+	_tabs.current_tab = next
+	_syncing_tabs = false
+	render_file(_open_files[next])
+
+
+func close_all_tabs() -> void:
+	_open_files.clear()
+	if _tabs != null:
+		_syncing_tabs = true
+		_tabs.clear_tabs()
+		_syncing_tabs = false
+	_current_path = StringUtils.EMPTY
+	if _reference_button != null:
+		_reference_button.visible = false
+	if _preview_host != null:
+		_clear_preview()
+
+
+## Renders one file into the preview area; tabs decide which file that is.
+func render_file(path: String) -> void:
 	_current_path = path
 	_reference_button.visible = true
 	_clear_preview()
@@ -252,6 +361,21 @@ func show_file(path: String) -> void:
 	code.add_theme_font_override("font", Fonts.code())
 	code.add_theme_font_size_override("font_size", Typography.body_small)
 	code.add_theme_color_override("font_color", ThemeColor.title_color)
+	code.add_theme_color_override("font_readonly_color", ThemeColor.title_color)
+	code.add_theme_color_override("caret_color", ThemeColor.theme_color)
+	code.add_theme_color_override("line_number_color", ThemeColor.body_color)
+	code.add_theme_color_override("selection_color", ThemeColor.selection_color)
+	var code_style := StyleBoxFlat.new()
+	code_style.bg_color = AppTheme.background()
+	code_style.set_corner_radius_all(6)
+	code_style.content_margin_left = Margin.ma_2
+	code_style.content_margin_right = Margin.ma_2
+	code_style.content_margin_top = Margin.ma_1
+	code_style.content_margin_bottom = Margin.ma_1
+	code.add_theme_stylebox_override("normal", code_style)
+	code.add_theme_stylebox_override("focus", code_style)
+	code.add_theme_stylebox_override("read_only", code_style)
+	code.syntax_highlighter = CommonHighlighter.create(path)
 	_preview_host.add_child(code)
 
 

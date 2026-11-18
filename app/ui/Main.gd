@@ -133,8 +133,9 @@ func _ready() -> void:
 	if OS.get_environment("GAI_PI_EDITOR") == "1":
 		toggle_editor(true)
 		var editor_file := OS.get_environment("GAI_PI_EDITOR_FILE").strip_edges()
-		if not editor_file.is_empty():
-			_editor.show_file(editor_file)
+		# Multiple files are separated by "|" so tab switching can be exercised.
+		for file in editor_file.split("|", false):
+			_editor.show_file(file)
 	get_window().files_dropped.connect(on_files_dropped)
 	get_window().title = "gai-pi"
 	_input_field.grab_focus()

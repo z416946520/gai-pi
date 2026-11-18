@@ -35,6 +35,7 @@ SOFTWARE.
 | 路径 | 来源 | 改动 |
 | --- | --- | --- |
 | `icon.svg` | gai `icon.svg` | 像素字 "AI" 改为 "PI"，保留齿轮机身、面部镂空、像素高光与配色；`<title>`/`<desc>` 同步 |
+| `app/ui/code/`（CodeColors、CommonHighlighter、GdScriptHighlighter、JsonHighlighter、MarkdownHighlighter、WindowsHighlighter、CodeHighlighterInstance） | gai `agent/manager/git/code/` | 未改动；`MarkdownHighlighter` 对 `ChatInputFileCompletion` 的两处引用改为本工程的 `MentionScan`（同逻辑的最小实现） |
 | `zfoo/` | gai `zfoo/` | 未改动 |
 | `app/visuals/` | gai `agent/ui/visuals/` | 47 个脚本的资源路径 `res://agent/ui/visuals/` → `res://app/visuals/`；5 处 `BubbleContainer` 类型判断 → `ChatBubble`；`VisualControl.gd` 重写为 `app/ui/VisualStage.gd`；`ChatEntryCursor.gd` 重写数据源；`ToolVisualDisplay.gd` 重写工具映射；删除 `VisualControl.gd`、原 `ChatEntryCursor.gd` |
 | `app/markdown/MarkdownParser.gd`、`MarkdownParseResult.gd` | gai `agent/markdown/` | 未改动 |

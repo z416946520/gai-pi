@@ -274,8 +274,12 @@ pi 没有检查点概念，用用户自己的仓库会往里塞 commit。gai-pi 
 
 - **文件树**：排除 `.git`/`.godot`/`.dependency`/`node_modules` 等目录与 `*.import`/`*.uid`，
   最多 4000 个节点，超出截断。
-- **预览**：图片走 `Image`/`ImageTexture`；Markdown 走 gai 的 `MarkdownParser` 转 BBCode
-  （README 里的 HTML 标签先剥掉）；其余按文本用只读 `CodeEdit` 显示，超过 2MB 只给提示。
+- **预览**：打开的文件进 `TabBar`，每个标签带关闭按钮，切标签只换右侧内容。图片走
+  `Image`/`ImageTexture`；Markdown 走 gai 的 `MarkdownParser` 转 BBCode（README 里的 HTML
+  标签先剥掉）；其余按文本用只读 `CodeEdit` 显示，超过 2MB 只给提示。
+- **语法高亮**：直接复用 gai 的 `agent/manager/git/code/` 全套（`CommonHighlighter.create(path)`
+  按后缀分派 GDScript/JSON/Markdown/Windows/通用，`CodeColors` 随主题切换），只在
+  `MarkdownHighlighter` 里把 `@mention` 扫描换成同逻辑的 `MentionScan`。
 - **引用**：点「引用」把 `@相对路径` 追加到输入框，交给 pi 的 `@path` 展开。
 
 只读是刻意的：写文件归 pi，外壳不跟它抢，避免同一份文件两个写入者。
@@ -385,7 +389,7 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
   里的内容；`turns.json` 还没有清理策略。
 - **图片输入的边界**：只接图片，不接音频/视频；剪贴板里同时有文字和图片时优先进文字。
 - **聊天记录搜索**：只搜当前会话的正文/标题，没有正则、没有跨会话、没有结果内高亮。
-- **编辑器**：只读预览，没有标签页、没有写操作、没有语法高亮。
+- **编辑器**：只读预览（标签页与语法高亮已有），没有写操作、没有 diff 视图、没有搜索。
 - **主题切换的代价**：重建界面会丢掉未提交的瞬时状态（正在预览的特效、未发送的弹窗）；
   主题选择本身持久化在 `Setting` 里。
 - **并发多会话**：一个工作目录一个 pi 进程，同时只能跑一个会话。
@@ -410,7 +414,7 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 7. **打包**（已完成）：`tools/package.ps1` 产出便携目录与 zip，包内引擎可启动、可截图。
 8. **主题**（已完成）：`AppTheme` 映射外壳色，右上角深/浅切换，重建界面但保留会话与草稿。
 9. **聊天内容搜索**（已完成）：纯函数匹配 + 浮层结果 + 跳转高亮，远端命中重建窗口。
-10. **编辑器增强**：标签页、语法高亮、diff 视图、写操作。
+10. **编辑器增强**（部分完成）：标签页与语法高亮已接；diff 视图、写操作、文件内搜索待做。
 11. **并发会话**：同一工作目录跑两个 pi 进程，侧栏角标显示运行中。
 12. **导出单文件 exe**：装 Godot 导出模板后加 `export_presets.cfg`。
 
