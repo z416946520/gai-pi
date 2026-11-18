@@ -1,0 +1,12 @@
+# Godot import cache
+.godot/
+
+# Local engine download (installed per machine, see README)
+.dependency/
+
+# Verification artifacts
+.verify/
+
+# Reference clones / probes
+_ref_gai/
+_probe/

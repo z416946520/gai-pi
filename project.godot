@@ -1,0 +1,24 @@
+config_version=5
+
+[application]
+
+config/name="gai-pi"
+config/description="Pi agent desktop — a Godot shell that drives the pi coding agent over RPC."
+run/main_scene="res://app/ui/Main.tscn"
+config/features=PackedStringArray("4.6", "GL Compatibility")
+config/icon="res://icon.svg"
+
+[autoload]
+
+GodotFramework="*res://zfoo/GodotFramework.tscn"
+
+[display]
+
+window/size/viewport_width=1440
+window/size/viewport_height=900
+window/size/resizable=true
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"

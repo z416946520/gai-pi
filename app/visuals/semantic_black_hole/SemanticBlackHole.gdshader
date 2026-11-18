@@ -1,0 +1,176 @@
+shader_type canvas_item;
+render_mode unshaded;
+
+// Runtime contract with SemanticBlackHole.gd. Envelopes are normalized to 0..1.
+uniform vec4 accent_color : source_color = vec4(0.15, 0.8, 1.0, 1.0);
+uniform vec4 success_color : source_color = vec4(0.2, 0.9, 0.5, 1.0);
+uniform vec4 error_color : source_color = vec4(1.0, 0.2, 0.25, 1.0);
+uniform float gravity = 0.0;
+uniform float disk_energy = 0.0;
+uniform float reasoning_density = 0.0;
+uniform float jet_energy = 0.0;
+uniform float wormhole_open = 0.0;
+uniform float wormhole_angle = -0.6;
+uniform float success_return = 0.0;
+uniform float success_return_progress = 0.0;
+uniform float failure_shock = 0.0;
+uniform float context_density = 0.3;
+uniform float completion = 0.0;
+uniform float error_completion = 0.0;
+uniform float aspect = 1.777;
+
+float hash21(vec2 p) {
+	p = fract(p * vec2(123.34, 456.21));
+	p += dot(p, p + 45.32);
+	return fract(p.x * p.y);
+}
+
+float noise(vec2 p) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x), mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0)), f.x), f.y);
+}
+
+float ring(float radius, float center, float width) {
+	return exp(-abs(radius - center) / max(width, 0.0001));
+}
+
+float line_segment(vec2 p, vec2 a, vec2 b, float width) {
+	vec2 pa = p - a;
+	vec2 ba = b - a;
+	float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+	return exp(-length(pa - ba * h) / width);
+}
+
+void fragment() {
+	vec2 p = UV - 0.5;
+	p.x *= aspect;
+	float radius = length(p);
+	float angle = atan(p.y, p.x);
+	float t = TIME;
+	// Wrap angle to a continuous sector id so floor(angle) does not crack along atan’s -X branch cut.
+	float tau = 6.28318530718;
+	float sector_count = 38.0 * tau;
+
+	// Horizon breath is computed early so dust can fade as the well swells over it.
+	float horizon_base = mix(0.015, 0.112, smoothstep(0.0, 0.75, gravity));
+	float breath_phase = fract(TIME * 0.42);
+	float breath = smoothstep(0.0, 0.38, breath_phase) * (1.0 - smoothstep(0.52, 0.92, breath_phase));
+	float breath_strength = 0.35 + gravity * 0.45;
+	float horizon_radius = horizon_base * (1.0 + breath * 0.28 * breath_strength);
+
+	// Advect the original block-like ions without shearing them. Angular speed is calculated once
+	// per radial cell, so each square stays rigid while inner layers orbit faster than outer ones.
+	float flow_log_radius = log(max(radius, 0.025)) + t * 0.12;
+	float radial_coordinate = flow_log_radius * sector_count / tau;
+	float radial_cell = floor(radial_coordinate);
+	float cell_log_radius = (radial_cell + 0.5) * tau / sector_count - t * 0.12;
+	float cell_radius = exp(cell_log_radius);
+	// Cell width grows with radius, so use the inverse radius for the orbital gradient: the
+	// small inner squares turn quickly while the large outer squares drift slowly. Evaluating
+	// it once per radial cell keeps every square rigid instead of twisting across its width.
+	float orbit_radius = max(cell_radius, 0.055);
+	float inverse_radius_spin = 0.028 * (1.0 - exp(-t * 0.12)) / (0.12 * orbit_radius);
+	float inner_spin_boost = 0.003 * (1.0 - exp(-t * 0.24)) / (0.24 * orbit_radius * orbit_radius);
+	float vortex_rotation = t * 0.008 + inverse_radius_spin + inner_spin_boost;
+	float flow_angle = angle - vortex_rotation;
+	float angular_coordinate = fract(flow_angle / tau + 0.5) * sector_count;
+	float sector = floor(angular_coordinate);
+	// Equal angular and logarithmic-radial cell spans form locally square ions. Keeping the mask
+	// inset leaves a stable gap around every square, even while neighboring layers rotate apart.
+	vec2 cell_uv = abs(fract(vec2(angular_coordinate, radial_coordinate)) - 0.5);
+	float square = 1.0 - smoothstep(0.37, 0.44, max(cell_uv.x, cell_uv.y));
+	float dust_cells = noise(vec2(sector, radial_cell));
+	float cell_angle = (sector + 0.5) * tau / sector_count - tau * 0.5;
+	float cell_log = (radial_cell + 0.5) * tau / sector_count;
+	float spiral_weight = 0.3 + 0.7 * pow(abs(sin(cell_angle * 7.0 + cell_log * 19.0)), 9.0);
+	float dust = smoothstep(0.82 - context_density * 0.22, 0.98, dust_cells) * square * smoothstep(0.78, 0.11, radius);
+	dust *= spiral_weight;
+	// Ions soften as the breathing horizon reaches them so each swell reads as a swallow.
+	dust *= smoothstep(horizon_radius, horizon_radius + 0.08, radius);
+	vec3 color = accent_color.rgb * dust * (0.24 + gravity * 0.72);
+
+	// The disk is an aspect-correct ellipse. Splitting at local y lets the back half be drawn
+	// dimly before the horizon and the front half brightly after it, creating a 3D silhouette.
+	float disk_radius = length(vec2(p.x, p.y / 0.27));
+	float disk_spin = t * (2.4 + 1.2 / max(disk_radius, 0.2));
+	// Cos/sin basis stays continuous around the circle; raw angle noise seams on the -X axis.
+	vec2 disk_dir = vec2(cos(angle - disk_spin), sin(angle - disk_spin));
+	float disk_noise = noise(disk_dir * 12.0 + vec2(disk_radius * 36.0, disk_radius * 8.0));
+	float disk_band = ring(disk_radius, 0.33, 0.035 + disk_noise * 0.022) * smoothstep(0.05, 0.5, disk_energy);
+	float hot_inner = ring(disk_radius, 0.245, 0.018) * disk_energy;
+	// Wider, overlapping masks so the equator does not read as a hard horizontal cut.
+	float back_mask = smoothstep(0.06, -0.08, p.y);
+	vec3 disk_color = mix(accent_color.rgb, vec3(1.0, 0.68, 0.28), 0.42 + disk_noise * 0.28);
+	color += disk_color * (disk_band + hot_inner * 1.4) * back_mask * 0.48;
+
+	// The photon ring approximates gravitational lensing without sampling the actual chat UI.
+	float lens = ring(radius, horizon_radius + 0.026, 0.004 + reasoning_density * 0.003);
+	float upper_lens = ring(length(vec2(p.x, (p.y + 0.105) / 0.42)), 0.27, 0.013) * smoothstep(-0.06, 0.1, p.y);
+	color += disk_color * upper_lens * disk_energy * 0.65;
+	vec3 lens_color = mix(accent_color.rgb, vec3(1.0), 0.4);
+	float lens_pulse = 0.35 + disk_energy * 0.65 + breath * 0.2;
+	color += lens_color * lens * lens_pulse;
+
+	// The event horizon remains nearly silent and opaque while activity accumulates around it.
+	// Soft outer lip so expanding breaths read as ions being engulfed rather than a hard punch.
+	float horizon = 1.0 - smoothstep(horizon_radius - 0.008, horizon_radius + 0.01, radius);
+	color = mix(color, vec3(0.0), horizon * 0.98);
+	float front_mask = smoothstep(-0.08, 0.06, p.y);
+	// Keep the photon ring from being cracked by the front disk pass.
+	float disk_over_lens = 1.0 - lens * 0.85;
+	color += disk_color * (disk_band + hot_inner * 1.55) * front_mask * 0.92 * disk_over_lens;
+	color += lens_color * lens * (0.12 + disk_energy * 0.22);
+
+	// Reasoning broadens a subtle interference halo around the photon ring.
+	float reasoning_halo = ring(radius, horizon_radius + 0.055 + sin(TIME * 3.0) * 0.006, 0.012);
+	color += accent_color.rgb * reasoning_halo * reasoning_density * 0.2;
+
+	// Content leaves as an asymmetric bipolar jet. The secondary jet is intentionally weaker.
+	vec2 jet_dir = normalize(vec2(0.82, -0.57));
+	float primary_jet = line_segment(p, jet_dir * horizon_radius, jet_dir * 0.95, 0.012 + jet_energy * 0.018);
+	float secondary_jet = line_segment(p, -jet_dir * horizon_radius, -jet_dir * 0.62, 0.01 + jet_energy * 0.012);
+	float jet_texture = 0.58 + 0.42 * noise(vec2(dot(p, jet_dir) * 95.0 - TIME * 24.0, dot(p, vec2(-jet_dir.y, jet_dir.x)) * 30.0));
+	vec3 jet_color = mix(accent_color.rgb, vec3(1.0, 0.64, 0.28), 0.58);
+	color += jet_color * (primary_jet + secondary_jet * 0.48) * jet_texture * jet_energy * 1.25;
+
+	// A tool opens a satellite wormhole at a stable name-derived angle.
+	vec2 worm_dir = vec2(cos(wormhole_angle), sin(wormhole_angle));
+	vec2 worm_pos = worm_dir * 0.64;
+	float worm_radius = length(p - worm_pos);
+	float worm_ring = ring(worm_radius, 0.055 * wormhole_open, 0.008);
+	float bridge = line_segment(p, worm_dir * (horizon_radius + 0.02), worm_pos, 0.005 + wormhole_open * 0.004);
+	float bridge_packets = pow(max(0.0, sin(length(p - worm_pos) * 92.0 + TIME * 12.0)), 14.0);
+	color += accent_color.rgb * (worm_ring * 1.55 + bridge * (0.24 + bridge_packets)) * wormhole_open;
+
+	// Travel progress and brightness are intentionally independent. The packet stays fully visible
+	// for its whole journey, rests briefly on the photon ring, then becomes an absorption flash.
+	float return_position = mix(0.64, horizon_radius, success_return_progress);
+	vec2 return_point = worm_dir * return_position;
+	float return_packet = exp(-length(p - return_point) / 0.018) * success_return;
+	float absorption_flash = ring(radius, horizon_radius + 0.012, 0.009) * smoothstep(0.92, 1.0, success_return_progress) * success_return;
+	color += success_color.rgb * (return_packet * 1.8 + bridge * success_return * 0.42 + absorption_flash * 1.25);
+
+	// Failure perturbs the disk rather than tinting the whole screen.
+	float shock_radius = (1.0 - failure_shock) * 0.52 + horizon_radius;
+	float shock = ring(radius + sin(angle * 11.0 + TIME * 9.0) * 0.012, shock_radius, 0.012);
+	float broken_disk = disk_band * smoothstep(0.72, 0.98, noise(vec2(angle * 17.0, floor(TIME * 12.0))));
+	color += error_color.rgb * (shock + broken_disk * 1.4) * failure_shock;
+
+	// Completion consumes the remaining field, flashes at the singularity, then emits sparse
+	// Hawking-like dust. Error completion substitutes a red unstable glow for the white flash.
+	float consume = smoothstep(0.0, 0.58, completion);
+	float collapse_radius = mix(0.42, 0.018, consume);
+	float collapse_ring = ring(radius, collapse_radius, 0.009) * smoothstep(0.02, 0.62, completion);
+	float flash = exp(-radius / 0.055) * smoothstep(0.5, 0.7, completion) * (1.0 - smoothstep(0.72, 0.84, completion));
+	float evaporation = smoothstep(0.66, 1.0, completion);
+	float hawking = smoothstep(0.9, 0.995, noise(floor(p * 175.0) - floor(TIME * 5.0))) * smoothstep(0.68, 0.08, radius);
+	vec3 final_color = mix(vec3(1.0), error_color.rgb, error_completion);
+	color *= 1.0 - consume * 0.92;
+	color += final_color * (collapse_ring * 1.5 + flash * 2.4 + hawking * evaporation * 0.85);
+
+	float alpha = clamp(length(color) * 0.68 + horizon * gravity * 0.58, 0.0, 0.72);
+	alpha *= 1.0 - smoothstep(0.91, 1.0, completion);
+	COLOR = vec4(color, alpha);
+}

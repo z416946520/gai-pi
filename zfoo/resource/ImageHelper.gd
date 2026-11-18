@@ -1,0 +1,260 @@
+class_name ImageHelper
+extends Object
+
+const bmp := "bmp"
+const dds := "dds"
+const exr := "exr"
+const jpg := "jpg"
+const jpeg := "jpeg"
+const ktx := "ktx"
+const png := "png"
+const svg := "svg"
+const tga := "tga"
+const webp := "webp"
+const EXTENSIONS: PackedStringArray = [bmp, dds, exr, jpg, jpeg, ktx, png, svg, tga, webp]
+
+
+class ImageDecodeResult:
+	var format: String
+	var image: Image
+
+
+	func _init(image_format: String, decoded_image: Image) -> void:
+		format = image_format
+		image = decoded_image
+		pass
+
+
+static func load_external_image(path: String) -> ImageTexture:
+	var image := Image.load_from_file(path)
+	return ImageTexture.create_from_image(image) if image != null and not image.is_empty() else null
+
+
+## Loads an SVG and paints it [param color].
+## A path with no fill gets one, and existing `#ffffff` paint is replaced, so Material icons and white strokes both take the color.
+## [param scale] is the raster scale passed to [method Image.load_svg_from_string].
+static func tint_svg(path: String, color: Color, scale: float = 1.0) -> ImageTexture:
+	var svg := FileAccess.get_file_as_string(path)
+	if svg.is_empty():
+		return ImageTexture.new()
+	var hex := "#" + color.to_html(false)
+	if not svg.contains("fill="):
+		svg = svg.replace("<path ", "<path fill=\"%s\" " % hex)
+	svg = svg.replace("#" + Color.WHITE.to_html(false), hex)
+	var image := Image.new()
+	if image.load_svg_from_string(svg, scale) != OK:
+		return ImageTexture.new()
+	return ImageTexture.create_from_image(image)
+
+
+## Loads the PNG layer nearest to [param preferred_size] from an ICO container.
+## Returns an empty texture when the ICO is invalid or its selected layer is not PNG-encoded.
+static func load_ico(path: String, preferred_size: int) -> ImageTexture:
+	var bytes := FileAccess.get_file_as_bytes(path)
+	if bytes.size() < 6 or bytes.decode_u16(2) != 1:
+		return ImageTexture.new()
+	var entry_count := bytes.decode_u16(4)
+	var selected_offset := -1
+	var selected_length := 0
+	var selected_difference := 1 << 30
+	for index in entry_count:
+		var entry_offset := 6 + index * 16
+		if entry_offset + 16 > bytes.size():
+			break
+		var width := 256 if bytes[entry_offset] == 0 else int(bytes[entry_offset])
+		var height := 256 if bytes[entry_offset + 1] == 0 else int(bytes[entry_offset + 1])
+		var difference := absi(maxi(width, height) - preferred_size)
+		if difference < selected_difference:
+			selected_difference = difference
+			selected_length = bytes.decode_u32(entry_offset + 8)
+			selected_offset = bytes.decode_u32(entry_offset + 12)
+	if selected_offset < 0 or selected_length <= 0 or selected_offset + selected_length > bytes.size():
+		return ImageTexture.new()
+	var image := Image.new()
+	if image.load_png_from_buffer(bytes.slice(selected_offset, selected_offset + selected_length)) != OK:
+		return ImageTexture.new()
+	return ImageTexture.create_from_image(image)
+
+
+static func get_image_format(path: String, default_format: String = png) -> String:
+	var path_without_query := path.get_slice("?", 0).get_slice("#", 0)
+	var extension := StringUtils.substring_after_last(path_without_query.to_lower(), ".")
+	return extension if EXTENSIONS.has(extension) else default_format
+
+
+## Saves [param bytes] using the encoder selected by [param path]'s extension.
+static func save_image(bytes: PackedByteArray, path: String) -> Error:
+	if bytes.is_empty():
+		return ERR_INVALID_DATA
+	var path_format := get_image_format(path, "")
+	if path_format.is_empty():
+		return ERR_FILE_UNRECOGNIZED
+	var decoded_image := decode_image(bytes)
+	if decoded_image == null:
+		return ERR_FILE_UNRECOGNIZED
+	match path_format:
+		jpg, jpeg:
+			return decoded_image.image.save_jpg(path)
+		png:
+			return decoded_image.image.save_png(path)
+		webp:
+			return decoded_image.image.save_webp(path)
+		_:
+			if decoded_image.format != path_format:
+				return ERR_FILE_UNRECOGNIZED
+			return FileUtils.write_byte_array_to_file(path, bytes)
+
+
+## Quickly identifies common image formats from their file signatures.
+static func detect_image_format(bytes: PackedByteArray) -> String:
+	if bytes.size() >= 3 and bytes[0] == 0xff and bytes[1] == 0xd8 and bytes[2] == 0xff:
+		return jpg
+	if bytes.size() >= 8 and bytes.slice(0, 8) == PackedByteArray([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]):
+		return png
+	if bytes.size() >= 12 and bytes.slice(0, 4).get_string_from_ascii() == "RIFF" and bytes.slice(8, 12).get_string_from_ascii() == "WEBP":
+		return webp
+	var header := bytes.slice(0, mini(bytes.size(), 4096)).get_string_from_utf8().strip_edges()
+	if header.trim_prefix("\ufeff").find("<svg") >= 0:
+		return svg
+	return ""
+
+
+static func decode_image(bytes: PackedByteArray) -> ImageDecodeResult:
+	var image := Image.new()
+	match detect_image_format(bytes):
+		jpg:
+			if image.load_jpg_from_buffer(bytes) == OK:
+				return ImageDecodeResult.new(jpg, image)
+		png:
+			if image.load_png_from_buffer(bytes) == OK:
+				return ImageDecodeResult.new(png, image)
+		webp:
+			if image.load_webp_from_buffer(bytes) == OK:
+				return ImageDecodeResult.new(webp, image)
+		svg:
+			if image.load_svg_from_buffer(bytes) == OK:
+				return ImageDecodeResult.new(svg, image)
+	image = Image.new()
+	if image.load_jpg_from_buffer(bytes) == OK:
+		return ImageDecodeResult.new(jpg, image)
+	image = Image.new()
+	if image.load_png_from_buffer(bytes) == OK:
+		return ImageDecodeResult.new(png, image)
+	image = Image.new()
+	if image.load_webp_from_buffer(bytes) == OK:
+		return ImageDecodeResult.new(webp, image)
+	image = Image.new()
+	if image.load_svg_from_buffer(bytes) == OK:
+		return ImageDecodeResult.new(svg, image)
+	image = Image.new()
+	if image.load_bmp_from_buffer(bytes) == OK:
+		return ImageDecodeResult.new(bmp, image)
+	image = Image.new()
+	if image.load_tga_from_buffer(bytes) == OK:
+		return ImageDecodeResult.new(tga, image)
+	image = Image.new()
+	if image.load_dds_from_buffer(bytes) == OK:
+		return ImageDecodeResult.new(dds, image)
+	image = Image.new()
+	if image.load_exr_from_buffer(bytes) == OK:
+		return ImageDecodeResult.new(exr, image)
+	image = Image.new()
+	if image.load_ktx_from_buffer(bytes) == OK:
+		return ImageDecodeResult.new(ktx, image)
+	return null
+
+# ----------------------------------------------------------------------------------------------------------------------
+## Fits an existing JPEG inside [param max_size] without upscaling; other formats are converted to JPEG.
+## JPEGs already inside the bounds return their original bytes unchanged.
+## Returns an empty byte array when decoding fails or [param max_size] is invalid.
+static func convert_to_jpg_with_max_size(image_bytes: PackedByteArray, max_size: Vector2i, quality: float = 0.90) -> PackedByteArray:
+	if max_size.x <= 0 or max_size.y <= 0:
+		return PackedByteArray()
+	var decoded_image := decode_image(image_bytes)
+	if decoded_image == null or decoded_image.image.is_empty():
+		return PackedByteArray()
+	var image := decoded_image.image
+	if not resize_image_to_max_size(image, max_size) and decoded_image.format == jpg:
+		return image_bytes
+	return image.save_jpg_to_buffer(clampf(quality, 0.0, 1.0))
+
+
+## Fits an existing PNG inside [param max_size] without upscaling; other formats are converted to PNG.
+## PNGs already inside the bounds return their original bytes unchanged.
+static func convert_to_png_with_max_size(image_bytes: PackedByteArray, max_size: Vector2i) -> PackedByteArray:
+	if max_size.x <= 0 or max_size.y <= 0:
+		return PackedByteArray()
+	var decoded_image := decode_image(image_bytes)
+	if decoded_image == null or decoded_image.image.is_empty():
+		return PackedByteArray()
+	var image := decoded_image.image
+	if not resize_image_to_max_size(image, max_size) and decoded_image.format == png:
+		return image_bytes
+	return image.save_png_to_buffer()
+
+
+## Fits an existing WebP inside [param max_size] without upscaling; other formats are converted to WebP.
+## WebPs already inside the bounds return their original bytes unchanged.
+## Returns an empty byte array when decoding fails or [param max_size] is invalid.
+static func convert_to_webp_with_max_size(image_bytes: PackedByteArray, max_size: Vector2i, quality: float = 0.90) -> PackedByteArray:
+	if max_size.x <= 0 or max_size.y <= 0:
+		return PackedByteArray()
+	var decoded_image := decode_image(image_bytes)
+	if decoded_image == null or decoded_image.image.is_empty():
+		return PackedByteArray()
+	var image := decoded_image.image
+	if not resize_image_to_max_size(image, max_size) and decoded_image.format == webp:
+		return image_bytes
+	return image.save_webp_to_buffer(clampf(quality, 0.0, 1.0))
+
+
+## Resizes [param image] proportionally only when it exceeds [param max_size].
+## Compressed formats (DDS / KTX) are decompressed first, because [method Image.resize] refuses them.
+## Godot widens the Lanczos kernel with the downscale factor, so one pass already anti-aliases a huge image.
+## Returns true when the image dimensions changed.
+static func resize_image_to_max_size(image: Image, max_size: Vector2i) -> bool:
+	if image == null or image.is_empty() or max_size.x <= 0 or max_size.y <= 0:
+		return false
+	if image.is_compressed() and image.decompress() != OK:
+		return false
+	var scale := minf(1.0, minf(float(max_size.x) / image.get_width(), float(max_size.y) / image.get_height()))
+	if scale >= 1.0:
+		return false
+	image.resize(maxi(1, roundi(image.get_width() * scale)), maxi(1, roundi(image.get_height() * scale)), Image.INTERPOLATE_LANCZOS)
+	return true
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+## Creates a theme-aware image card shown while remote content is loading.
+static func create_placeholder_texture(width: int = 160, height: int = 90) -> ImageTexture:
+	var background := Colors.control_surface.to_html(false)
+	var border := Colors.outline_variant.to_html(false)
+	var icon := Colors.secondary_text.to_html(false)
+	var svg_template := """
+	<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}" viewBox="0 0 160 90">
+	<rect x="0.5" y="0.5" width="159" height="89" rx="8" fill="#{}" stroke="#{}"/>
+	<g fill="none" stroke="#{}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+		<rect x="61" y="29" width="38" height="32" rx="4"/>
+		<circle cx="88" cy="39" r="3" fill="#{}" stroke="none"/>
+		<path d="M65 56l10-10 7 7 5-5 8 8"/>
+	</g>
+	</svg>"""
+	var svg := StringUtils.format(svg_template, width, height, background, border, icon, icon)
+	var image := Image.new()
+	if image.load_svg_from_buffer(svg.to_utf8_buffer()) != OK:
+		image = Image.create(width, height, false, Image.FORMAT_RGBA8)
+		image.fill(Colors.control_surface)
+	return ImageTexture.create_from_image(image)
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+## Loads the app logo with theme-aware AI lettering. Pass [param ai_color] to override the theme default.
+static func load_logo(ai_color: Color = Color.WHITE if ThemeColor.is_dark_theme() else Color.BLACK) -> ImageTexture:
+	var svg_source := FileAccess.get_file_as_string("res://icon.svg")
+	if svg_source.is_empty():
+		return ImageTexture.new()
+	var colored_svg := svg_source.replace("#000000", "#" + ai_color.to_html(false))
+	var image := Image.new()
+	if image.load_svg_from_string(colored_svg) != OK:
+		return ImageTexture.new()
+	return ImageTexture.create_from_image(image)

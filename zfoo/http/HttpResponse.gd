@@ -1,0 +1,81 @@
+class_name HttpResponse
+extends RefCounted
+
+
+var success: bool = false
+## HTTP status code (200, 404, 500, ...); 0 when the request never reached the server, and the code the
+## server reported when a failure happened after it answered (a stalled or truncated body).
+var code: int = 0
+var headers: Dictionary = {}
+var body: PackedByteArray = PackedByteArray()
+## Why a failed request failed. A transport failure (timeout, DNS, refused, TLS, cancelled) carries
+## no status code and no body, so readers must use this text instead of the body.
+var error: String = ""
+
+
+## Builds the response of a request that never reached the server, so callers can return a failed
+## response without leaving [member error] empty.
+static func failure(message: String) -> HttpResponse:
+	var response := HttpResponse.new()
+	response.error = message
+	return response
+
+
+func get_body_string() -> String:
+	return body.get_string_from_utf8()
+
+
+func is_redirect() -> bool:
+	return code == HTTPClient.RESPONSE_MOVED_PERMANENTLY or code == HTTPClient.RESPONSE_FOUND or code == HTTPClient.RESPONSE_SEE_OTHER \
+		or code == HTTPClient.RESPONSE_TEMPORARY_REDIRECT or code == HTTPClient.RESPONSE_PERMANENT_REDIRECT
+
+
+## True when the server answered 2xx. [member success] only says the exchange completed, so a 4xx/5xx
+## error payload arrives with [member success] set and only this method calls it a failure.
+func is_ok() -> bool:
+	return success and code >= HTTPClient.RESPONSE_OK and code < HTTPClient.RESPONSE_MULTIPLE_CHOICES
+
+
+## True when the server answered 2xx with a body, no matter how [member success] ended up.
+## A server that sends `Connection: close` makes the client report the peer close as a transport
+## error after the body already arrived, so [method is_ok] rejects a payload that is in fact complete;
+## callers that only need the data read this instead.
+func is_ok_with_body() -> bool:
+	return code >= HTTPClient.RESPONSE_OK and code < HTTPClient.RESPONSE_MULTIPLE_CHOICES and not body.is_empty()
+
+
+func get_header(name: String) -> String:
+	var lower_name := name.to_lower()
+	for header: Variant in headers:
+		if str(header).to_lower() == lower_name:
+			return str(headers[header]).strip_edges()
+	return ""
+
+
+## Reason text of a failed request: a transport failure wins even when a partial response body was
+## received, because that body may be a large, truncated stream. Otherwise use the server's error
+## payload, then the stored transport reason. Never blank.
+func get_error_string() -> String:
+	if not success and StringUtils.is_not_blank(error):
+		return error
+	var body_text := get_body_string().strip_edges()
+	if StringUtils.is_not_blank(body_text):
+		return body_text
+	if StringUtils.is_not_blank(error):
+		return error
+	return "no response"
+
+
+func get_body_json() -> Variant:
+	var text := get_body_string()
+	if StringUtils.is_blank(text):
+		return null
+	var json := JSON.new()
+	if json.parse(text) != OK:
+		Log.error("HttpResponse parse JSON failed: {}", json.get_error_message())
+		return null
+	return json.data
+
+
+func _to_string() -> String:
+	return StringUtils.format("HttpResponse[code:{}, bodySize:{}]", code, body.size())

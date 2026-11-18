@@ -1,0 +1,524 @@
+class_name TokenizerEffect
+extends TransformerStageEffect
+
+## Staged tokenizer animation: train-in → boundary cuts → ID reveal → fly-away with trails.
+## Hosted by [TransformerController]; sibling stages (e.g. EmbeddingEffect) can follow.
+
+const MIN_TOKEN_COUNT := 12
+const TOKEN_FONT_SIZE := 34
+const TOKEN_HEIGHT := 86.0
+const TOKEN_MIN_WIDTH := 12.0
+const CUT_GAP := 30.0
+const ROW_SCREEN_MARGIN := 48.0
+const CUTTER_WIDTH := 44.0
+const CUTTER_HEIGHT := TOKEN_HEIGHT + 36.0
+const CUT_SHAKE_AMPLITUDE := 7.5
+const FLY_VANISH_SCALE := 0.05
+const FLY_TRAIL_INTERVAL := 0.065
+const FLY_TRAIL_FADE := 0.34
+const HAZE_SHADER := """
+shader_type canvas_item;
+render_mode blend_add, unshaded;
+
+uniform vec4 effect_color : source_color = vec4(0.0, 0.84, 0.68, 1.0);
+
+void fragment() {
+	float x = abs(UV.x - 0.5) * 2.0;
+	float y = abs(UV.y - 0.5) * 2.0;
+	float soft = exp(-pow(x * 1.15, 2.0)) * exp(-pow(y * 2.4, 2.0));
+	float alpha = soft * 0.15 * COLOR.a;
+	COLOR = vec4(effect_color.rgb * soft, alpha);
+}
+"""
+const CUTTER_SHADER_DARK := """
+shader_type canvas_item;
+render_mode blend_add, unshaded;
+
+uniform vec4 effect_color : source_color = vec4(0.0, 0.84, 0.68, 1.0);
+uniform float intensity = 1.0;
+
+void fragment() {
+	// Single descending slit: hot white core + soft theme bloom, brighter toward the leading tip.
+	float x = UV.x - 0.5;
+	float core = exp(-pow(abs(x) * 58.0, 2.0));
+	float body = exp(-pow(abs(x) * 22.0, 2.0));
+	float bloom = exp(-pow(abs(x) * 8.0, 2.0));
+	float y_soft = smoothstep(0.0, 0.04, UV.y) * smoothstep(1.0, 0.96, UV.y);
+	float tip = mix(0.78, 1.22, smoothstep(0.0, 1.0, UV.y));
+	float beam = (core * 1.4 + body * 0.55) * tip;
+	float alpha = (beam + bloom * 0.4 * tip) * y_soft * intensity * COLOR.a;
+	vec3 color = mix(effect_color.rgb, vec3(1.0), clamp(core * 1.85 + body * 0.4, 0.0, 1.0));
+	color += effect_color.rgb * bloom * 0.5;
+	COLOR = vec4(color * intensity, alpha);
+}
+"""
+const CUTTER_SHADER_LIGHT := """
+shader_type canvas_item;
+render_mode unshaded;
+
+uniform vec4 effect_color : source_color = vec4(0.12, 0.35, 0.28, 1.0);
+uniform float intensity = 1.0;
+
+void fragment() {
+	// Ink blade on light chat backgrounds: saturated accent core, no white mix or additive blow-out.
+	float x = UV.x - 0.5;
+	float core = exp(-pow(abs(x) * 58.0, 2.0));
+	float body = exp(-pow(abs(x) * 22.0, 2.0));
+	float bloom = exp(-pow(abs(x) * 8.0, 2.0));
+	float y_soft = smoothstep(0.0, 0.04, UV.y) * smoothstep(1.0, 0.96, UV.y);
+	float tip = mix(0.85, 1.18, smoothstep(0.0, 1.0, UV.y));
+	float beam = (core * 1.35 + body * 0.5) * tip;
+	float fringe = bloom * 0.42 * tip;
+	float alpha = clamp((beam * 0.95 + fringe * 0.5) * y_soft * intensity, 0.0, 1.0) * COLOR.a;
+	vec3 ink = effect_color.rgb;
+	vec3 color = ink * (core * 1.3 + body * 0.62) + ink * fringe * 0.38;
+	COLOR = vec4(color, alpha);
+}
+"""
+
+## Total duration of each major animation stage.
+var train_arrival_duration := 1.35
+var token_cut_duration := 2.6
+var token_reveal_duration := 2.8
+var token_fly_duration := 1.2
+var token_fly_stagger := 0.13
+
+var row: Control
+var trail_layer: Control
+var token_nodes: Array[TransformerTokenNode] = []
+var cutter: ColorRect
+var cutter_material: ShaderMaterial
+var row_haze: ColorRect
+var haze_material: ShaderMaterial
+
+
+func _ready() -> void:
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	set_anchors_preset(Control.PRESET_FULL_RECT)
+	pass
+
+
+func cancel() -> void:
+	begin_play()
+	clear_tokens()
+	pass
+
+
+## Builds the token row and plays arrival → cut → reveal → fly-away. Cancels any prior play.
+func play(tokens: Array[LlamaHelper.Token]) -> void:
+	var generation := begin_play()
+	build_tokens(tokens)
+	await animate_transformer(generation)
+	pass
+
+
+static func select_complete_sentence(tokens: Array[LlamaHelper.Token], minimum: int = MIN_TOKEN_COUNT) -> Array[LlamaHelper.Token]:
+	var selected: Array[LlamaHelper.Token] = []
+	for token in tokens:
+		selected.append(token)
+		if selected.size() >= minimum and StringUtils.is_sentence_end(token.piece):
+			break
+	return selected
+
+
+func build_tokens(tokens: Array[LlamaHelper.Token]) -> void:
+	clear_tokens()
+	row = Control.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(row)
+	var font := Fonts.regular()
+	var x := 0.0
+	for token in tokens:
+		var display := TransformerTokenNode.display_piece(token.piece)
+		var width := maxf(TOKEN_MIN_WIDTH, font.get_string_size(display, HORIZONTAL_ALIGNMENT_LEFT, -1, TOKEN_FONT_SIZE).x)
+		var token_node := TransformerTokenNode.new()
+		token_node.setup(token, Vector2(width, TOKEN_HEIGHT))
+		token_node.position = Vector2(x, 0.0)
+		token_node.pivot_offset = Vector2(width * 0.5, TOKEN_HEIGHT * 0.42)
+		row.add_child(token_node)
+		token_nodes.append(token_node)
+		x += width
+	row.size = Vector2(x, TOKEN_HEIGHT)
+	row.pivot_offset = row.size * 0.5
+	row_haze = ColorRect.new()
+	row_haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row_haze.color = Color(1.0, 1.0, 1.0, 1.0)
+	row_haze.position = Vector2(-36.0, -28.0)
+	row_haze.size = Vector2(row.size.x + 72.0, TOKEN_HEIGHT + 40.0)
+	row_haze.z_index = -1
+	haze_material = create_shader_material(HAZE_SHADER)
+	row_haze.material = haze_material
+	row.add_child(row_haze)
+	cutter = ColorRect.new()
+	cutter.color = Color(1.0, 1.0, 1.0, 0.0)
+	cutter.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cutter.size = Vector2(CUTTER_WIDTH, CUTTER_HEIGHT)
+	cutter.pivot_offset = Vector2(CUTTER_WIDTH * 0.5, CUTTER_HEIGHT * 0.5)
+	cutter.position = Vector2(-CUTTER_WIDTH * 0.5, -CUTTER_HEIGHT)
+	cutter.rotation = 0.03
+	cutter.z_index = 10
+	var cutter_shader := CUTTER_SHADER_DARK if ThemeColor.is_dark_theme() else CUTTER_SHADER_LIGHT
+	cutter_material = create_shader_material(cutter_shader)
+	cutter.material = cutter_material
+	var accent := cutter_accent_color()
+	cutter_material.set_shader_parameter("effect_color", accent)
+	haze_material.set_shader_parameter("effect_color", VisualColor.appearance_color(ThemeColor.accent_theme_color()))
+	row.add_child(cutter)
+	spawn_ambient_dust()
+	var available_width := maxf(1.0, size.x - ROW_SCREEN_MARGIN * 2.0)
+	var fit_scale := minf(1.0, available_width / row.size.x)
+	row.scale = Vector2(fit_scale, fit_scale)
+	row.position = Vector2(size.x + ROW_SCREEN_MARGIN, (size.y - TOKEN_HEIGHT * fit_scale) * 0.5)
+	pass
+
+
+static func cutter_accent_color() -> Color:
+	var accent := VisualColor.appearance_color(ThemeColor.accent_theme_color())
+	if ThemeColor.is_light_theme():
+		return ThemeColor.promote(accent, Weights.w_2)
+	return accent
+
+
+static func cutter_peak_intensity() -> float:
+	return 1.4 if ThemeColor.is_dark_theme() else 1.75
+
+
+static func create_shader_material(code: String) -> ShaderMaterial:
+	var shader := Shader.new()
+	shader.code = code
+	var shader_material := ShaderMaterial.new()
+	shader_material.shader = shader
+	return shader_material
+
+
+func animate_transformer(generation: int) -> void:
+	var scaled_width := row.size.x * row.scale.x
+	var centered_x := (size.x - scaled_width) * 0.5
+	var arrive := remember_tween(create_tween())
+	arrive.tween_property(row, "position:x", centered_x, train_arrival_duration).set_trans(Tween.TRANS_QUINT).set_ease(Tween.EASE_OUT)
+	await arrive.finished
+	if not is_current(generation):
+		return
+
+	await animate_cut_stage(generation)
+	if not is_current(generation):
+		return
+
+	var step_duration := maxf(0.32, token_reveal_duration / float(maxi(1, token_nodes.size())))
+	var reveal := remember_tween(create_tween())
+	for token_node in token_nodes:
+		reveal.tween_callback(token_node.play_reveal.bind(step_duration * 1.55))
+		reveal.tween_interval(step_duration)
+	await reveal.finished
+	await get_tree().create_timer(step_duration * 0.7).timeout
+	if not is_current(generation):
+		return
+
+	await animate_fly_away(generation)
+	pass
+
+
+## One-by-one launch toward a vanishing point; each token leaves neon afterimage trails.
+func animate_fly_away(generation: int) -> void:
+	if token_nodes.is_empty():
+		return
+	reparent_tokens_for_flight()
+	if not is_current(generation):
+		return
+
+	trail_layer = Control.new()
+	trail_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	trail_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	add_child(trail_layer)
+
+	# Vanishing point sits upper-left so the path matches the cinematic receding arc.
+	var vanish := Vector2(size.x * 0.22, size.y * 0.16)
+	var stagger := maxf(0.08, token_fly_stagger)
+	var launch := remember_tween(create_tween())
+	for token_index in token_nodes.size():
+		var lateral := (float(token_index) / float(maxi(1, token_nodes.size() - 1)) - 0.5) * size.x * 0.08
+		var target := vanish + Vector2(lateral, float(token_index) * -4.0)
+		launch.tween_callback(launch_token_flight.bind(token_index, target, token_fly_duration, generation))
+		launch.tween_interval(stagger)
+	await launch.finished
+	if not is_current(generation):
+		return
+	await get_tree().create_timer(token_fly_duration + FLY_TRAIL_FADE).timeout
+	if not is_current(generation):
+		return
+	clear_tokens()
+	pass
+
+
+func reparent_tokens_for_flight() -> void:
+	if row == null or not is_instance_valid(row):
+		return
+	for token_node in token_nodes:
+		if token_node == null or not is_instance_valid(token_node):
+			continue
+		token_node.reparent(self)
+		token_node.z_index = 20
+	row.queue_free()
+	row = null
+	cutter = null
+	cutter_material = null
+	row_haze = null
+	haze_material = null
+	pass
+
+
+func launch_token_flight(token_index: int, target: Vector2, duration: float, generation: int) -> void:
+	if not is_current(generation) or token_index < 0 or token_index >= token_nodes.size():
+		return
+	var token_node := token_nodes[token_index]
+	if token_node == null or not is_instance_valid(token_node):
+		return
+	var start_pos := token_node.position
+	var start_scale := token_node.scale
+	var start_mod := token_node.modulate
+	var last_trail := [-FLY_TRAIL_INTERVAL]
+	var flight := remember_tween(create_tween())
+	flight.tween_method(func(t: float) -> void:
+		if not is_current(generation) or token_index >= token_nodes.size():
+			return
+		var node := token_nodes[token_index]
+		if node == null or not is_instance_valid(node):
+			return
+		var e := t * t
+		var arc := Vector2(0.0, -size.y * 0.08 * sin(t * PI))
+		node.position = start_pos.lerp(target, e) + arc
+		node.scale = start_scale * lerpf(1.0, FLY_VANISH_SCALE, e)
+		node.modulate = Color(start_mod.r, start_mod.g, start_mod.b, lerpf(start_mod.a, 0.0, pow(e, 1.25)))
+		node.rotation = lerpf(0.0, -0.12, e)
+		if t - last_trail[0] >= FLY_TRAIL_INTERVAL and e < 0.92:
+			last_trail[0] = t
+			spawn_trail_ghost(node, start_pos.direction_to(target))
+	, 0.0, 1.0, duration)
+	pass
+
+
+func spawn_trail_ghost(source: TransformerTokenNode, direction: Vector2) -> void:
+	if trail_layer == null or not is_instance_valid(trail_layer) or source == null or not is_instance_valid(source):
+		return
+	var ghost: TransformerTokenNode = source.duplicate() as TransformerTokenNode
+	if ghost == null:
+		return
+	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ghost.stop_reveal_tween()
+	trail_layer.add_child(ghost)
+	ghost.position = source.position
+	ghost.rotation = source.rotation
+	ghost.scale = source.scale
+	ghost.modulate = Color(source.modulate.r, source.modulate.g, source.modulate.b, source.modulate.a * 0.62)
+	ghost.z_index = source.z_index - 1
+
+	var drift := -direction.normalized() * 18.0 if direction.length_squared() > 0.0001 else Vector2(0.0, 14.0)
+	var fade := remember_tween(create_tween().set_parallel(true))
+	fade.tween_property(ghost, "modulate:a", 0.0, FLY_TRAIL_FADE).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	fade.tween_property(ghost, "position", ghost.position + drift, FLY_TRAIL_FADE).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	fade.tween_property(ghost, "scale", ghost.scale * Vector2(0.78, 1.35), FLY_TRAIL_FADE).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	fade.chain().tween_callback(ghost.queue_free)
+	pass
+
+
+func animate_cut_stage(generation: int) -> void:
+	var boundary_count := maxi(0, token_nodes.size() - 1)
+	if boundary_count == 0:
+		await get_tree().create_timer(token_cut_duration).timeout
+		return
+	var cut_width := row.size.x + CUT_GAP * boundary_count
+	var available_width := maxf(1.0, size.x - ROW_SCREEN_MARGIN * 2.0)
+	var final_scale := minf(1.0, available_width / cut_width)
+	var initial_scale := row.scale.x
+	var step_duration := maxf(0.28, token_cut_duration / float(boundary_count))
+	var targets: Array[float] = []
+	for token_node in token_nodes:
+		targets.append(token_node.position.x)
+	cutter.color.a = 0.0
+	for boundary_index in boundary_count:
+		if not is_current(generation):
+			return
+		var boundary_x := (targets[boundary_index] + token_nodes[boundary_index].size.x + targets[boundary_index + 1]) * 0.5
+		for token_index in token_nodes.size():
+			targets[token_index] += -CUT_GAP * 0.5 if token_index <= boundary_index else CUT_GAP * 0.5
+		var stage_scale := lerpf(initial_scale, final_scale, float(boundary_index + 1) / float(boundary_count))
+		await animate_boundary_cut(generation, boundary_index, boundary_x, targets, stage_scale, step_duration)
+		if not is_current(generation):
+			return
+	pass
+
+
+## Top-to-bottom slash: enter from above → hit → exit below while thinning → shorten out.
+func animate_boundary_cut(generation: int, boundary_index: int, boundary_x: float, targets: Array[float], stage_scale: float, step_duration: float) -> void:
+	var peak_intensity := cutter_peak_intensity()
+	var cutter_x := boundary_x - CUTTER_WIDTH * 0.5
+	var start_y := -CUTTER_HEIGHT - 6.0
+	var hit_y := TOKEN_HEIGHT * 0.42 - CUTTER_HEIGHT * 0.5
+	var exit_y := TOKEN_HEIGHT + 10.0
+	cutter.position = Vector2(cutter_x, start_y)
+	cutter.scale = Vector2(1.0, 1.0)
+	cutter.color.a = 0.0
+	if cutter_material != null:
+		cutter_material.set_shader_parameter("intensity", 0.35)
+
+	var enter := remember_tween(create_tween().set_parallel(true))
+	enter.tween_property(cutter, "position:y", hit_y, step_duration * 0.34).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	enter.tween_property(cutter, "color:a", 1.0, step_duration * 0.08)
+	if cutter_material != null:
+		enter.tween_method(func(value: float) -> void: cutter_material.set_shader_parameter("intensity", value), 0.35, peak_intensity, step_duration * 0.34)
+	await enter.finished
+	if not is_current(generation):
+		return
+
+	spawn_cut_particles(Vector2(boundary_x, TOKEN_HEIGHT * 0.42))
+	var row_rest := row.position
+
+	var exit := remember_tween(create_tween().set_parallel(true))
+	for token_index in token_nodes.size():
+		exit.tween_property(token_nodes[token_index], "position:x", targets[token_index], step_duration * 0.42).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	exit.tween_property(row, "scale", Vector2(stage_scale, stage_scale), step_duration * 0.42).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+	exit.tween_property(cutter, "position:y", exit_y, step_duration * 0.40).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	exit.tween_property(cutter, "scale:x", 0.30, step_duration * 0.28).set_delay(step_duration * 0.10).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	exit.tween_method(func(t: float) -> void: apply_cut_shake(row_rest, boundary_index, t), 0.0, 1.0, step_duration * 0.40)
+	if cutter_material != null:
+		exit.tween_method(func(value: float) -> void: cutter_material.set_shader_parameter("intensity", value), peak_intensity, 0.85, step_duration * 0.40)
+	await exit.finished
+	if not is_current(generation):
+		return
+	if row != null and is_instance_valid(row):
+		row.position = row_rest
+	reset_token_shake()
+
+	var fade := remember_tween(create_tween().set_parallel(true))
+	fade.tween_property(cutter, "scale:y", 0.06, step_duration * 0.14).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	fade.tween_property(cutter, "scale:x", 0.08, step_duration * 0.14).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	fade.tween_property(cutter, "color:a", 0.0, step_duration * 0.12).set_delay(step_duration * 0.03)
+	if cutter_material != null:
+		fade.tween_method(func(value: float) -> void: cutter_material.set_shader_parameter("intensity", value), 0.85, 0.0, step_duration * 0.14)
+	await fade.finished
+	if cutter != null and is_instance_valid(cutter):
+		cutter.color.a = 0.0
+		cutter.scale = Vector2(1.0, 1.0)
+	if cutter_material != null:
+		cutter_material.set_shader_parameter("intensity", 0.0)
+	pass
+
+
+func apply_cut_shake(rest_position: Vector2, boundary_index: int, t: float) -> void:
+	if row == null or not is_instance_valid(row):
+		return
+	var screen_amp := CUT_SHAKE_AMPLITUDE / maxf(row.scale.x, 0.25)
+	var envelope := exp(-t * 3.4)
+	var wave := Vector2(sin(t * TAU * 4.5 + 1.2), cos(t * TAU * 3.6 + 0.4))
+	row.position = rest_position + wave * screen_amp * envelope * Vector2(1.0, 0.7)
+	for token_index in token_nodes.size():
+		var token_node := token_nodes[token_index]
+		if token_node == null or not is_instance_valid(token_node):
+			continue
+		var distance := absf(float(token_index) - (float(boundary_index) + 0.5))
+		var falloff := clampf(1.15 - distance * 0.35, 0.15, 1.0)
+		var side := -1.0 if token_index <= boundary_index else 1.0
+		token_node.position.y = wave.y * screen_amp * 0.9 * envelope * falloff * side
+		token_node.rotation = wave.x * 0.018 * envelope * falloff * side
+	pass
+
+
+func reset_token_shake() -> void:
+	for token_node in token_nodes:
+		if token_node == null or not is_instance_valid(token_node):
+			continue
+		token_node.position.y = 0.0
+		token_node.rotation = 0.0
+	pass
+
+
+func spawn_cut_particles(at_position: Vector2) -> void:
+	var accent := VisualColor.appearance_color(ThemeColor.accent_theme_color())
+	var sparks := make_cut_particles(at_position, 14, 0.42, 70.0, 160.0, 1.2, 2.8)
+	sparks.color = Color(1.0, 1.0, 1.0, 0.95)
+	var spark_ramp := Gradient.new()
+	spark_ramp.colors = PackedColorArray([Color(1.0, 1.0, 1.0, 1.0), Color(accent, 0.85), Color(accent, 0.0)])
+	spark_ramp.offsets = PackedFloat32Array([0.0, 0.35, 1.0])
+	sparks.color_ramp = spark_ramp
+	row.add_child(sparks)
+	sparks.emitting = true
+	var dust := make_cut_particles(at_position, 22, 0.78, 18.0, 58.0, 1.8, 4.5)
+	dust.gravity = Vector2(0.0, -12.0)
+	dust.damping_min = 1.5
+	dust.damping_max = 3.5
+	dust.color = Color(accent, 0.75)
+	var dust_ramp := Gradient.new()
+	dust_ramp.colors = PackedColorArray([Color(accent.lightened(0.45), 0.9), Color(accent, 0.45), Color(accent, 0.0)])
+	dust_ramp.offsets = PackedFloat32Array([0.0, 0.45, 1.0])
+	dust.color_ramp = dust_ramp
+	row.add_child(dust)
+	dust.emitting = true
+	pass
+
+
+func spawn_ambient_dust() -> void:
+	var accent := VisualColor.appearance_color(ThemeColor.accent_theme_color())
+	var dust := CPUParticles2D.new()
+	dust.position = Vector2(row.size.x * 0.5, TOKEN_HEIGHT * 0.42)
+	dust.z_index = 8
+	dust.amount = 16
+	dust.lifetime = 2.4
+	dust.preprocess = 1.2
+	dust.emitting = true
+	dust.one_shot = false
+	dust.explosiveness = 0.0
+	dust.randomness = 0.7
+	dust.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
+	dust.emission_rect_extents = Vector2(row.size.x * 0.48, 18.0)
+	dust.direction = Vector2(0.0, -1.0)
+	dust.spread = 180.0
+	dust.gravity = Vector2(0.0, -6.0)
+	dust.initial_velocity_min = 4.0
+	dust.initial_velocity_max = 16.0
+	dust.scale_amount_min = 0.8
+	dust.scale_amount_max = 2.0
+	dust.color = Color(accent, 0.35)
+	var ramp := Gradient.new()
+	ramp.colors = PackedColorArray([Color(accent, 0.0), Color(accent.lightened(0.35), 0.32), Color(accent, 0.0)])
+	ramp.offsets = PackedFloat32Array([0.0, 0.4, 1.0])
+	dust.color_ramp = ramp
+	row.add_child(dust)
+	pass
+
+
+func make_cut_particles(at_position: Vector2, amount: int, lifetime: float, speed_min: float, speed_max: float, scale_min: float, scale_max: float) -> CPUParticles2D:
+	var particles := CPUParticles2D.new()
+	particles.position = at_position
+	particles.z_index = 11
+	particles.amount = amount
+	particles.lifetime = lifetime
+	particles.one_shot = true
+	particles.explosiveness = 0.92
+	particles.direction = Vector2(0.0, -1.0)
+	particles.spread = 180.0
+	particles.gravity = Vector2(0.0, 28.0)
+	particles.initial_velocity_min = speed_min
+	particles.initial_velocity_max = speed_max
+	particles.scale_amount_min = scale_min
+	particles.scale_amount_max = scale_max
+	particles.finished.connect(particles.queue_free)
+	return particles
+
+
+func clear_tokens() -> void:
+	stop_animation()
+	if trail_layer != null and is_instance_valid(trail_layer):
+		trail_layer.queue_free()
+	trail_layer = null
+	for token_node in token_nodes:
+		if token_node != null and is_instance_valid(token_node) and token_node.get_parent() != row:
+			token_node.queue_free()
+	token_nodes.clear()
+	if row != null and is_instance_valid(row):
+		row.queue_free()
+	row = null
+	cutter = null
+	cutter_material = null
+	row_haze = null
+	haze_material = null
+	pass

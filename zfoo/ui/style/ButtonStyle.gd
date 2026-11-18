@@ -1,0 +1,197 @@
+class_name ButtonStyle
+extends Object
+
+## Shared [BaseButton] state styling: install the state set a button needs. The boxes themselves
+## are built by [StyleBoxHelper]; hover and pressed fills use [method ThemeColor.promote] and
+## [method ThemeColor.demote] so contrast stays correct when the theme flips.
+##
+## Solid fills (accent buttons, shadows) are the exception — those read as plain shading, so they
+## keep [method Color.darkened] on every theme.
+##
+## Typical use:
+## [codeblock]
+## ButtonStyle.apply_style(button)
+## [/codeblock]
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# BaseButton
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+## Standard card-surface button chrome shared by dialog and toolbar controls.
+static func theme_normal_style() -> StyleBoxFlat:
+	return StyleBoxHelper.create_style_box_flat(ThemeColor.card_surface, ControlSize.radius_md, Margin.ma_2, Margin.ma_1,
+		ThemeColor.accent_theme_color(), ControlSize.border_xs)
+
+
+## Hover fill for [param normal]: quiet selected surface with a soft accent outline.
+static func theme_hover_style_for(normal: StyleBoxFlat) -> StyleBoxFlat:
+	return StyleBoxHelper.duplicate_with_bg_color(normal, ThemeColor.selected_surface, ThemeColor.alpha_theme_color(Weights.w_10))
+
+
+## Pressed fill for [param normal]: stronger selected surface; [param border_color] defaults to accent.
+static func theme_pressed_style_for(normal: StyleBoxFlat, border_color: Color = ThemeColor.accent_theme_color()) -> StyleBoxFlat:
+	return StyleBoxHelper.duplicate_with_bg_color(normal, ThemeColor.promote(ThemeColor.selected_surface, Weights.w_2), border_color)
+
+
+## Default hover box paired with [method theme_normal_style].
+static func theme_hover_style() -> StyleBoxFlat:
+	return theme_hover_style_for(theme_normal_style())
+
+
+## Default pressed box paired with [method theme_normal_style].
+static func theme_pressed_style() -> StyleBoxFlat:
+	return theme_pressed_style_for(theme_normal_style())
+
+
+## Apply normal, hover, and pressed states. [code]focus[/code] mirrors [param hover], disabled
+## mirrors [param normal], and hover-pressed mirrors [param pressed]. Override a derived state
+## directly when a particular button needs a distinct appearance.
+##
+## The hover-pressed override must not be omitted: Godot resolves a missing item from the default
+## theme, so a button that only overrides normal / hover / pressed paints the engine's own box
+## while it is pressed *and* hovered.
+##
+## Style boxes default to [method theme_normal_style] and its paired hover / pressed states.
+## Omitted [param hover] and [param pressed] are derived from the resolved [param normal].
+static func apply_style(button: BaseButton, normal: StyleBoxFlat = null, hover: StyleBoxFlat = null, pressed: StyleBoxFlat = null) -> void:
+	var resolved_normal := normal if normal != null else theme_normal_style()
+	var resolved_hover := hover if hover != null else theme_hover_style_for(resolved_normal)
+	var resolved_pressed := pressed if pressed != null else theme_pressed_style_for(resolved_normal)
+	button.add_theme_stylebox_override("normal", resolved_normal)
+	button.add_theme_stylebox_override("hover", resolved_hover)
+	button.add_theme_stylebox_override("pressed", resolved_pressed)
+	button.add_theme_stylebox_override("focus", resolved_hover.duplicate() as StyleBoxFlat)
+	button.add_theme_stylebox_override("disabled", resolved_normal.duplicate() as StyleBoxFlat)
+	button.add_theme_stylebox_override("hover_pressed", resolved_pressed.duplicate() as StyleBoxFlat)
+	pass
+
+
+## Text colors for the same states, one per `font_*_color` theme item: focus mirrors
+## [param hover] and hover-pressed mirrors [param pressed], the same pairing
+## [method apply_style] uses for the boxes.
+##
+## Those two are not optional — an item left out is resolved from the default theme, whose focus
+## and hover-pressed text are near white and would vanish on a light surface.
+##
+## Disabled text defaults to [param normal] at half alpha.
+static func apply_font_colors(button: BaseButton, normal: Color, hover: Color, pressed: Color) -> void:
+	button.add_theme_color_override("font_color", normal)
+	button.add_theme_color_override("font_hover_color", hover)
+	button.add_theme_color_override("font_pressed_color", pressed)
+	button.add_theme_color_override("font_focus_color", hover)
+	button.add_theme_color_override("font_hover_pressed_color", pressed)
+	button.add_theme_color_override("font_disabled_color", Color(normal, Weights.w_8))
+	pass
+
+
+## Icon colors for the same interaction states as [method apply_font_colors]. This keeps icon-only
+## toolbar buttons from falling back to the engine's white pressed/hover icon colors in light UI.
+## Disabled icons default to [param base_color] at half alpha.
+static func apply_icon_colors(button: BaseButton, base_color: Color, hover_color: Color, pressed_color: Color) -> void:
+	button.add_theme_color_override("icon_normal_color", base_color)
+	button.add_theme_color_override("icon_hover_color", hover_color)
+	button.add_theme_color_override("icon_pressed_color", pressed_color)
+	button.add_theme_color_override("icon_focus_color", hover_color)
+	button.add_theme_color_override("icon_hover_pressed_color", pressed_color)
+	button.add_theme_color_override("icon_disabled_color", Color(base_color, Weights.w_8))
+	pass
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# OptionButton
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+## Apply standard dropdown states: the normal surface gains an accent outline while hovered,
+## pressed, or focused, and retains the shared text colors in every state.
+static func apply_option_button(option: OptionButton, normal: StyleBoxFlat = LineEditStyle.theme_normal_style(), text_color: Color = Colors.primary_text) -> void:
+	var hover: StyleBoxFlat = normal.duplicate() as StyleBoxFlat
+	hover.border_color = ThemeColor.accent_theme_color()
+	apply_style(option, normal, hover, hover.duplicate())
+	var focus := hover.duplicate() as StyleBoxFlat
+	focus.set_border_width_all(ControlSize.border_sm)
+	option.add_theme_stylebox_override("focus", focus)
+	option.add_theme_constant_override("arrow_margin", Margin.ma_3)
+	option.add_theme_constant_override("modulate_arrow", 1)
+	apply_font_colors(option, text_color, text_color, text_color)
+	PopupMenuStyle.apply(option.get_popup())
+	pass
+
+
+# ----------------------------------------------------------------------------------------------------------------------
+# Button
+# ----------------------------------------------------------------------------------------------------------------------
+
+
+## Icon-first [Button] and [MenuButton] (for example FileDialog [code]FlatButton[/code]): transparent chrome, muted at rest, stronger on hover.
+##
+## The engine-flat variant recolors the glyph per state and paints no hover fill; for a standalone icon
+## that needs hover feedback use [method apply_icon_button].
+static func apply_flat_icon_button(button: Button, normal: Color = Colors.secondary_text, hover: Color = ThemeColor.title_color, press: Color = ThemeColor.accent_theme_color()) -> void:
+	var box_normal := StyleBoxHelper.create_style_box_flat(Color.TRANSPARENT, ControlSize.radius_sm, Margin.ma_2, Margin.ma_1)
+	apply_style(button, box_normal)
+	apply_font_colors(button, normal, hover, hover)
+	apply_icon_colors(button, normal, hover, press)
+	pass
+
+
+## Rasterize UI SVGs oversized; [code]icon_max_*[/code] trims them back to the icon token so they stay crisp.
+const ICON_RASTER_SCALE := 2.0
+
+
+## Round icon [Button] shared by queued-message rows and chat bubble headers: the icon sits alone at rest
+## and gains a filled disc on hover, instead of the outlined box a text button beside it needs.
+##
+## [param size] is the square tier of the button; the disc radius is half of it, so the hover shape stays a
+## circle on every tier. The icon takes the room left after [constant Margin.ma_1] padding, which lands on
+## the matching icon token (sm → icon_md, xs → icon_xs) without a second table of sizes.
+##
+## Callers that own a UI SVG path should use [method create_icon_button] instead.
+static func apply_icon_button(button: Button, size: int = ControlSize.sm) -> void:
+	button.flat = false
+	button.focus_mode = Control.FOCUS_NONE
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	button.custom_minimum_size = ControlSize.square(size)
+	button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	button.expand_icon = false
+	var icon_size := size - 2 * Margin.ma_1
+	button.add_theme_constant_override("icon_max_width", icon_size)
+	button.add_theme_constant_override("icon_max_height", icon_size)
+	var normal := StyleBoxHelper.create_style_box_flat(Color.TRANSPARENT, size / 2, Margin.ma_1, Margin.ma_1)
+	apply_style(button, normal,
+			StyleBoxHelper.duplicate_with_bg_color(normal, ThemeColor.selected_surface),
+			StyleBoxHelper.duplicate_with_bg_color(normal, ThemeColor.selected_surface.lerp(ThemeColor.accent_theme_color(), Weights.w_2)))
+	pass
+
+
+## Complete icon [Button] from a UI SVG path: the glyph is rasterized white and colored through the icon
+## overrides, so one texture covers every state and any icon drops in without extra wiring — the caller
+## only sets a name if it needs one, connects [signal BaseButton.pressed], and adds it to a row.
+##
+## [param icon_color] defaults to the accent color; the transparent default is the same "unset" sentinel
+## [method StyleBoxHelper.duplicate_with_bg_color] uses.
+static func create_icon_button(icon_path: String, tooltip: String, size: int = ControlSize.sm, icon_color: Color = Color.TRANSPARENT) -> Button:
+	var button := Button.new()
+	button.tooltip_text = tooltip
+	button.icon = ImageHelper.tint_svg(icon_path, Color.WHITE, ICON_RASTER_SCALE)
+	apply_icon_button(button, size)
+	var resolved_color := ThemeColor.accent_theme_color() if icon_color.a == 0.0 else icon_color
+	apply_icon_colors(button, resolved_color, resolved_color, resolved_color)
+	return button
+
+
+## Filled action [Button] shared by settings rows and window toolbars: raised surface fill with no
+## outline, and hover / pressed states shaded from that same surface.
+##
+## Pass [param icon_only] for a glyph button that must stay square: the wide text padding would
+## otherwise push its minimum width past the square footprint. Equal margins keep it square.
+static func apply_action_button(button: Button, icon_only: bool = false) -> void:
+	apply_font_colors(button, Colors.primary_text, Colors.primary_text, Colors.primary_text)
+	var margin_x := Margin.ma_1 if icon_only else Margin.ma_3
+	var normal := StyleBoxHelper.create_style_box_flat(Colors.surface_container_high, ControlSize.radius_lg, margin_x, Margin.ma_1)
+	var hover := StyleBoxHelper.duplicate_with_bg_color(normal, Colors.hover(Colors.surface_container_high))
+	var pressed := StyleBoxHelper.duplicate_with_bg_color(normal, ThemeColor.promote(Colors.surface_container_high, Weights.w_2))
+	apply_style(button, normal, hover, pressed)
+	pass
