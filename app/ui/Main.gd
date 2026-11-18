@@ -88,6 +88,16 @@ var _build_started_at: int = 0
 var _sessions_signature: String = StringUtils.EMPTY
 var _window_start: int = 0
 var _load_earlier_button: Button = null
+## One pi process per session so several sessions can run at the same time.
+var _workspace_path: String = StringUtils.EMPTY
+var _hosts: Dictionary[String, PiWorkspace] = {}
+var _bound_hosts: Dictionary[String, bool] = {}
+var _host_lru: Dictionary[String, int] = {}
+var _dialog_host_by_id: Dictionary[String, String] = {}
+var _active_key: String = StringUtils.EMPTY
+var _local_id_seq: int = 0
+var _new_session_seq: int = 0
+var _boot_hooks_done: bool = false
 var _session_search: LineEdit = null
 var _prompt: ModalPrompt = null
 var _pinned_paths: Array[String] = []
@@ -225,14 +235,13 @@ func _capture_screenshot() -> void:
 
 
 func _notification(what: int) -> void:
-	if what == NOTIFICATION_WM_CLOSE_REQUEST and workspace_host != null:
-		workspace_host.stop()
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		shutdown_hosts()
 
 
 func _exit_tree() -> void:
 	AsyncProcess.stop_all()
-	if workspace_host != null:
-		workspace_host.stop()
+	shutdown_hosts()
 
 
 # ---------------------------------------------------------------------------
@@ -727,20 +736,15 @@ func _initial_workspace() -> String:
 	return OS.get_executable_path().get_base_dir()
 
 
+## Opens a workspace: stops the previous hosts, then starts a fresh session process.
 func open_workspace(path: String) -> void:
-	if workspace_host != null:
-		workspace_host.stop()
-	workspace_host = PiWorkspace.new(path)
-	workspace_host.ready.connect(on_workspace_ready)
-	workspace_host.failed.connect(on_workspace_failed)
-	workspace_host.session_loaded.connect(on_session_loaded)
-	workspace_host.streaming_changed.connect(on_streaming_changed)
-	workspace_host.state_changed.connect(on_state_changed)
-	workspace_host.prompt_done.connect(on_prompt_done)
-	workspace_host.dialog_requested.connect(on_dialog_requested)
-	workspace_host.notification.connect(on_notification)
-	workspace_host.status_changed.connect(on_extension_status)
-	workspace_host.widget_changed.connect(on_extension_widget)
+	shutdown_hosts()
+	_workspace_path = path
+	_hosts.clear()
+	_bound_hosts.clear()
+	_host_lru.clear()
+	_active_key = StringUtils.EMPTY
+	_boot_hooks_done = false
 	AppSetting.set_string(AppSetting.KEY_WORKSPACE, path)
 	PiEvents.events.workspace_changed.emit(path)
 	_workspace_button.text = _short_path(path)
@@ -749,18 +753,19 @@ func open_workspace(path: String) -> void:
 	_checkpoints = CheckpointManager.new()
 	_checkpoints.failed.connect(func(message: String) -> void: show_status(message))
 	_checkpoints.setup(path)
-	workspace_host.checkpoints = _checkpoints
-	workspace_host.start()
 	if _editor != null:
 		_editor.set_workspace(path)
+	var key := "new:%d" % _new_session_seq
+	_new_session_seq += 1
+	create_host(key, StringUtils.EMPTY)
+	activate_session(key)
 
 
-func on_agent_end_checkpoint(_session_id: int, _error_message: String) -> void:
+func on_agent_end_checkpoint(session_id: int, _error_message: String) -> void:
+	# Background hosts settle too; only the visible turn owns the checkpoint.
+	if session == null or session.local_id != session_id:
+		return
 	finish_checkpoint()
-
-
-func on_prompt_done(_disposition: String) -> void:
-	refresh_sessions()
 
 
 func on_dialog_requested(data: Dictionary) -> void:
@@ -769,8 +774,11 @@ func on_dialog_requested(data: Dictionary) -> void:
 
 
 func on_dialog_answered(id: String, payload: Dictionary) -> void:
-	if workspace_host != null:
-		workspace_host.answer_dialog(id, payload)
+	var key: String = _dialog_host_by_id.get(id, _active_key)
+	_dialog_host_by_id.erase(id)
+	var host: PiWorkspace = _hosts.get(key)
+	if host != null:
+		host.answer_dialog(id, payload)
 
 
 func on_notification(message: String, level: String) -> void:
@@ -785,14 +793,108 @@ func on_notification(message: String, level: String) -> void:
 	show_status(message)
 
 
-func on_workspace_ready() -> void:
-	session = workspace_host.session
+func create_host(key: String, session_path: String) -> PiWorkspace:
+	_local_id_seq += 1
+	var host := PiWorkspace.new(_workspace_path, session_path)
+	host.local_id = _local_id_seq
+	host.checkpoints = _checkpoints
+	host.ready.connect(func() -> void: on_host_ready(key))
+	host.failed.connect(func(message: String) -> void: on_host_failed(key, message))
+	host.session_loaded.connect(func(session_value: PiSession) -> void: on_host_loaded(key, session_value))
+	host.streaming_changed.connect(func(streaming: bool) -> void: on_host_streaming(key, streaming))
+	host.state_changed.connect(func() -> void: on_host_state(key))
+	host.prompt_done.connect(func(_disposition: String) -> void: refresh_sessions(true))
+	host.dialog_requested.connect(func(data: Dictionary) -> void: on_host_dialog(key, data))
+	host.notification.connect(on_notification)
+	host.status_changed.connect(on_extension_status)
+	host.widget_changed.connect(on_extension_widget)
+	_hosts[key] = host
+	host.start()
+	return host
+
+
+func shutdown_hosts() -> void:
+	for host in _hosts.values():
+		if host != null:
+			host.stop()
+	_hosts.clear()
+	_bound_hosts.clear()
+	_host_lru.clear()
+	workspace_host = null
+	session = null
+
+
+func bind_host_session(key: String) -> void:
+	var host: PiWorkspace = _hosts.get(key)
+	if host == null or host.session == null or _bound_hosts.has(key):
+		return
+	_bound_hosts[key] = true
+	host.session.entry_added.connect(func(entry: ChatEntry) -> void: on_host_entry_added(key, entry))
+	host.session.entry_updated.connect(func(entry: ChatEntry, kind: String) -> void: on_host_entry_updated(key, entry, kind))
+	host.session.usage_changed.connect(func(usage: OpenAiUsage) -> void:
+		if key == _active_key:
+			on_usage_changed(usage)
+	)
+	host.session.title_changed.connect(func(_title: String) -> void: refresh_sessions(true))
+
+
+## Shows one host's transcript without stopping the others.
+func activate_session(key: String) -> bool:
+	if not _hosts.has(key):
+		return false
+	var host: PiWorkspace = _hosts[key]
+	_active_key = key
+	_host_lru[key] = Time.get_ticks_msec()
+	workspace_host = host
+	session = host.session
+	bind_host_session(key)
+	_sidebar_failed = false
 	update_empty_state()
-	_apply_session_signals(session)
-	_sidebar_status.text = ""
+	if host.is_ready and session != null:
+		start_transcript_build(session.entries)
+		on_state_changed()
+		_sidebar_status.text = StringUtils.EMPTY
+	else:
+		clear_transcript()
+		_sidebar_status.text = T.t("gai_pi.sidebar.starting")
 	_visuals_picker.selected = clampi(AppSetting.get_int(AppSetting.KEY_VISUAL, 0), 0, VisualStage.type_names().size() - 1)
-	refresh_sessions()
+	refresh_sessions(true)
+	evict_hosts()
+	return true
+
+
+## Reuses the running host for this file, or starts one for it.
+func open_session_by_path(path: String) -> void:
+	if path.is_empty():
+		return
+	if _hosts.has(path):
+		activate_session(path)
+		return
+	_sidebar_status.text = T.t("gai_pi.sidebar.switching")
+	create_host(path, path)
+	activate_session(path)
+
+
+func on_host_ready(key: String) -> void:
+	var host: PiWorkspace = _hosts.get(key)
+	if host == null or key != _active_key:
+		bind_host_session(key)
+		return
+	session = host.session
+	bind_host_session(key)
+	start_transcript_build(session.entries)
 	on_state_changed()
+	refresh_sessions(true)
+	_sidebar_status.text = StringUtils.EMPTY
+	_visuals_picker.selected = clampi(AppSetting.get_int(AppSetting.KEY_VISUAL, 0), 0, VisualStage.type_names().size() - 1)
+	if not _boot_hooks_done:
+		_boot_hooks_done = true
+		run_boot_hooks()
+	else:
+		update_empty_state()
+
+
+func run_boot_hooks() -> void:
 	var fake_dialog := OS.get_environment("GAI_PI_FAKE_DIALOG").strip_edges()
 	if not fake_dialog.is_empty() and _dialogs != null:
 		_dialogs.request({
@@ -805,33 +907,109 @@ func on_workspace_ready() -> void:
 		})
 	var open_session := OS.get_environment("GAI_PI_SESSION").strip_edges()
 	if not open_session.is_empty():
-		var target := open_session if FileAccess.file_exists(open_session) else PiSessionIndex.path_for_id(workspace_host.workspace, open_session)
+		var target := open_session if FileAccess.file_exists(open_session) else PiSessionIndex.path_for_id(_workspace_path, open_session)
 		if not target.is_empty():
-			workspace_host.switch_session(target)
+			open_session_by_path(target)
 	var auto_prompt := OS.get_environment("GAI_PI_AUTOPROMPT").strip_edges()
 	if not auto_prompt.is_empty():
 		_input_field.text = auto_prompt
 		on_send_pressed()
 
 
-func on_workspace_failed(message: String) -> void:
+func on_host_failed(key: String, message: String) -> void:
+	var host: PiWorkspace = _hosts.get(key)
+	if host != null:
+		_hosts.erase(key)
+		_bound_hosts.erase(key)
+		host.stop()
+	if key != _active_key:
+		return
 	_sidebar_failed = true
 	_sidebar_status.text = message
 	show_status(message)
 
 
-func on_session_loaded(loaded: PiSession) -> void:
+func on_host_loaded(key: String, loaded: PiSession) -> void:
 	print("[gai-pi] session ", loaded.pi_id, " entries=", loaded.entries.size(), " path=", loaded.path)
+	bind_host_session(key)
+	rekey_host(key)
+	if key != _active_key:
+		return
+	session = loaded
 	if _sidebar_status != null and not _sidebar_failed:
 		_sidebar_status.text = StringUtils.EMPTY
-	session = loaded
-	_apply_session_signals(loaded)
 	start_transcript_build(loaded.entries)
 	refresh_sessions(true)
 	if not _pending_delete.is_empty() and loaded.path != _pending_delete:
 		var stale := _pending_delete
 		_pending_delete = StringUtils.EMPTY
 		remove_session_file(stale)
+
+
+func on_host_streaming(key: String, streaming: bool) -> void:
+	rekey_host(key)
+	refresh_sessions(true)
+	if key != _active_key:
+		return
+	if _stop_button != null:
+		_stop_button.visible = streaming
+	if _send_button != null:
+		_send_button.text = T.t("gai_pi.composer.steer") if streaming else T.t("gai_pi.composer.send")
+
+
+func on_host_state(key: String) -> void:
+	if key != _active_key:
+		return
+	on_state_changed()
+
+
+## A fresh session gets its file after the first message; move the host to that key.
+func rekey_host(key: String) -> void:
+	var host: PiWorkspace = _hosts.get(key)
+	if host == null or host.session == null:
+		return
+	var path := host.session.path
+	if path.is_empty() or path == key or _hosts.has(path):
+		return
+	_hosts.erase(key)
+	_hosts[path] = host
+	if _active_key == key:
+		_active_key = path
+	_bound_hosts.erase(key)
+	if _host_lru.has(key):
+		_host_lru[path] = _host_lru[key]
+		_host_lru.erase(key)
+	refresh_sessions(true)
+
+
+## Keeps memory bounded: idle, unselected processes are stopped first.
+func evict_hosts() -> void:
+	const MAX_HOSTS := 4
+	if _hosts.size() <= MAX_HOSTS:
+		return
+	var candidates: Array[String] = []
+	for key in _hosts:
+		var host: PiWorkspace = _hosts[key]
+		if key == _active_key or host.is_streaming:
+			continue
+		candidates.append(key)
+	candidates.sort_custom(func(a: String, b: String) -> bool:
+		return int(_host_lru.get(a, 0)) < int(_host_lru.get(b, 0))
+	)
+	while _hosts.size() > MAX_HOSTS and not candidates.is_empty():
+		var victim: String = candidates.pop_front()
+		_hosts[victim].stop()
+		_hosts.erase(victim)
+		_bound_hosts.erase(victim)
+		_host_lru.erase(victim)
+
+
+func on_host_dialog(key: String, data: Dictionary) -> void:
+	var id := str(data.get("id", StringUtils.EMPTY))
+	if not id.is_empty():
+		_dialog_host_by_id[id] = key
+	if _dialogs != null:
+		_dialogs.request(data)
 
 
 ## Builds an explicit slice, used when a search hit is outside the tail window.
@@ -906,20 +1084,13 @@ func on_load_earlier_pressed() -> void:
 		_programmatic_scroll = false
 
 
-func _apply_session_signals(target: PiSession) -> void:
-	if target.is_connected("entry_added", on_entry_added):
-		return
-	target.entry_added.connect(on_entry_added)
-	target.entry_updated.connect(on_entry_updated)
-	target.usage_changed.connect(on_usage_changed)
-	target.title_changed.connect(func(_title: String) -> void: refresh_sessions())
-
-
 # ---------------------------------------------------------------------------
 # Transcript
 # ---------------------------------------------------------------------------
 
-func on_entry_added(entry: ChatEntry) -> void:
+func on_host_entry_added(key: String, entry: ChatEntry) -> void:
+	if key != _active_key:
+		return
 	add_bubble(entry)
 	if _follow_tail:
 		scroll_to_bottom()
@@ -968,7 +1139,9 @@ func add_bubble(entry: ChatEntry) -> void:
 	update_empty_state()
 
 
-func on_entry_updated(entry: ChatEntry, _stream_kind: String) -> void:
+func on_host_entry_updated(key: String, entry: ChatEntry, _stream_kind: String) -> void:
+	if key != _active_key:
+		return
 	var bubble: ChatBubble = _bubbles.get(entry)
 	if bubble == null:
 		add_bubble(entry)
@@ -1167,12 +1340,10 @@ func on_stop_pressed() -> void:
 func on_new_session_pressed() -> void:
 	if workspace_host == null:
 		return
-	if workspace_host.is_streaming:
-		show_status(T.t("gai_pi.status.new_while_running"))
-		return
-	clear_transcript()
-	workspace_host.new_session()
-	refresh_sessions()
+	var key := "new:%d" % _new_session_seq
+	_new_session_seq += 1
+	create_host(key, StringUtils.EMPTY)
+	activate_session(key)
 
 
 func on_workspace_pressed() -> void:
@@ -1235,13 +1406,6 @@ func on_thinking_pressed() -> void:
 	menu.popup_hide.connect(menu.queue_free)
 	menu.position = Vector2i(get_global_mouse_position())
 	menu.popup()
-
-
-func on_streaming_changed(streaming: bool) -> void:
-	if _stop_button != null:
-		_stop_button.visible = streaming
-	if _send_button != null:
-		_send_button.text = T.t("gai_pi.composer.steer") if streaming else T.t("gai_pi.composer.send")
 
 
 func on_state_changed() -> void:
@@ -1379,7 +1543,9 @@ func refresh_sessions(force: bool = false) -> void:
 		var path := str(meta.get("path", ""))
 		var title := str(meta.get("title", ""))
 		var preview := str(meta.get("preview", ""))
-		signature_parts.append("%s|%s|%s" % [path, title, str(meta.get("modified", 0))])
+		var host: PiWorkspace = _hosts.get(path)
+		var running := host != null and host.is_streaming
+		signature_parts.append("%s|%s|%s|%s" % [path, title, str(meta.get("modified", 0)), running])
 		if not filter.is_empty() and not title.to_lower().contains(filter) and not preview.to_lower().contains(filter):
 			continue
 		if _pinned_paths.has(path):
@@ -1454,13 +1620,9 @@ func build_session_row(meta: Dictionary, is_active: bool, pinned: bool = false) 
 	button.add_theme_stylebox_override("hover", style)
 	button.add_theme_stylebox_override("pressed", style)
 	button.pressed.connect(func() -> void:
-		if workspace_host == null or path.is_empty():
+		if path.is_empty():
 			return
-		if workspace_host.is_streaming:
-			show_status(T.t("gai_pi.status.switch_while_running"))
-			return
-		_sidebar_status.text = T.t("gai_pi.sidebar.switching")
-		workspace_host.switch_session(path)
+		open_session_by_path(path)
 	)
 	button.gui_input.connect(func(event: InputEvent) -> void:
 		var mouse := event as InputEventMouseButton
@@ -1481,6 +1643,10 @@ func build_session_row(meta: Dictionary, is_active: bool, pinned: bool = false) 
 	var title := Label.new()
 	var raw_title := str(meta.get("title", StringUtils.EMPTY))
 	title.text = raw_title if not raw_title.is_empty() else T.t("gai_pi.sidebar.untitled")
+	var host: PiWorkspace = _hosts.get(path)
+	if host != null and host.is_streaming:
+		title.text = "● " + title.text
+		title.add_theme_color_override("font_color", ThemeColor.theme_color)
 	title.clip_text = true
 	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	title.add_theme_font_override("font", Fonts.medium())
@@ -1892,8 +2058,8 @@ func apply_locale() -> void:
 	if _workspace_button == null:
 		return
 	_workspace_button.tooltip_text = T.t("gai_pi.topbar.switch_workspace")
-	if workspace_host != null:
-		_workspace_button.text = _short_path(workspace_host.workspace)
+	if not _workspace_path.is_empty():
+		_workspace_button.text = _short_path(_workspace_path)
 	_model_button.tooltip_text = T.t("gai_pi.topbar.choose_model")
 	_thinking_button.tooltip_text = T.t("gai_pi.topbar.thinking")
 	_visuals_picker.tooltip_text = T.t("gai_pi.topbar.visual")

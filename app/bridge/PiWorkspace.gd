@@ -38,7 +38,10 @@ var thinking_level: String = StringUtils.EMPTY
 var checkpoints: CheckpointManager = null
 
 var _launcher_path: String = StringUtils.EMPTY
-var _next_local_id: int = 1
+## Session this process was started for; empty means a fresh session.
+var start_session_path: String = StringUtils.EMPTY
+## UI id assigned by the shell so several hosts never collide.
+var local_id: int = 0
 var _state_requested_at: int = 0
 var _needs_entries: bool = true
 var _last_command_error: String = StringUtils.EMPTY
@@ -47,8 +50,9 @@ var _switch_started_at: int = 0
 var _entries_started_at: int = 0
 
 
-func _init(workspace_path: String) -> void:
+func _init(workspace_path: String, session_path: String = StringUtils.EMPTY) -> void:
 	workspace = workspace_path
+	start_session_path = session_path
 
 
 func start() -> bool:
@@ -247,8 +251,7 @@ func on_state(result: Dictionary) -> void:
 	if first_time:
 		session = PiSession.new()
 		session.workspace_root = workspace
-		session.local_id = _next_local_id
-		_next_local_id += 1
+		session.local_id = local_id
 		session.running = is_streaming
 		session.title_changed.connect(func(title: String) -> void:
 			PiEvents.events.session_title_changed.emit(session.local_id, title)
@@ -267,7 +270,10 @@ func on_state(result: Dictionary) -> void:
 		ready.emit()
 	if _needs_entries:
 		_needs_entries = false
-		load_entries()
+		if not start_session_path.is_empty():
+			load_session_file(start_session_path)
+		else:
+			load_entries()
 
 
 ## Checkpoint metadata for a session, or an empty list when checkpoints are off.
@@ -399,7 +405,10 @@ func _write_launcher() -> bool:
 	var directory := ProjectSettings.globalize_path("user://runtime")
 	DirAccess.make_dir_recursive_absolute(directory)
 	var windows := OSUtils.is_windows()
-	_launcher_path = directory.path_join(LAUNCHER_CMD if windows else LAUNCHER_SH)
+	var suffix := str(local_id) if local_id > 0 else "0"
+	_launcher_path = directory.path_join("%s-%s.%s" % [
+		"launch", suffix, "cmd" if windows else "sh",
+	])
 	var node := PiPaths.node_bin.replace("\\", "/")
 	var cli := PiPaths.cli_js.replace("\\", "/")
 	var root := workspace.replace("\\", "/")
@@ -411,6 +420,9 @@ func _write_launcher() -> bool:
 	else:
 		content = "#!/bin/sh\ncd \"%s\" || exit 1\nexec \"%s\" \"%s\" --mode rpc\n" % [root, node, cli]
 	var file := FileAccess.open(_launcher_path, FileAccess.WRITE)
+	# One process per session: the session file is passed to pi at launch.
+	if not start_session_path.is_empty():
+		content = content.replace("--mode rpc", "--mode rpc --session \"" + start_session_path + "\"")
 	if file == null:
 		return false
 	file.store_string(content)

@@ -110,13 +110,21 @@ fork 会连带一整套 GDScript 版 agent（循环、18 个工具、MCP、VLM�
 
 ## 四、进程与会话模型
 
-- **一个工作目录一个 pi 进程**。pi 的会话工作目录在创建时固定，`switch_session` 只能在同目录
-  内切换，所以进程边界和「打开的项目」对齐。
-- **启动时切换工作目录**：`OS.execute_with_pipe` 不能设置子进程 cwd。gai-pi 写一个
-  `user://runtime/launch.cmd`（Windows）或 `launch.sh`，内容是 `cd /d <工作目录>` + 启动 node，
-  再用 `cmd.exe /c <脚本>` 拉起。脚本内容每次启动重写，无注入面（路径来自用户选择）。
-- **会话切换不重启进程**：`switch_session {sessionPath}` → `get_state` → `get_entries` →
-  重建对话流。侧栏数据来自扫描 `<config>/sessions/--<encoded cwd>--/*.jsonl` 的文件头与尾部。
+- **一个会话一个 pi 进程**。pi 的会话工作目录在创建时固定，一个进程同时只装一个会话；
+  要并行跑多个会话，就得给每个会话各自一个进程。`Main._hosts` 是 `路径 -> PiWorkspace` 的池，
+  每个 host 用 `pi --mode rpc --session <文件>` 启动，后台运行时互不影响。侧栏每个运行中的
+  会话前面加 `●`，切过去只是换显示，原来的进程还在跑。
+- **启动时切换工作目录**：`OS.execute_with_pipe` 不能设置子进程 cwd。每个 host 写一个
+  `user://runtime/launch-<local_id>.cmd`（Windows）或 `.sh`，内容是 `cd /d <工作目录>` + 启动 node，
+  再用 `cmd.exe /c <脚本>` 拉起。文件名按 host 的 local id 区分，多个进程不会互相覆盖。
+- **切换会话不再走 `switch_session`**：命中已有 host 就 `activate_session`（换显示 + 从内存
+  entries 重放窗口，约 300ms）；没有 host 才起一个进程，启动同时读会话文件而非 `get_entries`。
+- **新会话的 key 会变**：新 host 用 `new:<n>` 占位，第一条消息落盘后 `rekey_host()` 把它挪到
+  文件路径下，侧栏随之出现这一行。
+- **上限与淘汰**：池子最多 4 个进程，超出时按 LRU 停掉「非当前 + 非运行中」的 host；
+  每个进程约占 100–200MB。
+- **本地 id**：pi 用 UUID，视觉层与 gai 的钩子用 `int`。每个 host 从 shell 拿一个全局递增的
+  `local_id`，这样多会话的视觉事件不会串台。
 - **本地 id**：pi 用 UUID，视觉层与 gai 的钩子用 `int`。`PiSession.local_id` 做一次映射，
   这样 60 个效果一行都不用改。
 - **目录编码**：去掉前导分隔符，把 `/`、`\`、`:` 换成 `-`，两侧加 `--`。
@@ -382,8 +390,8 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 
 - **弹窗队列**：`select/confirm/input/editor` 已能渲染并回写，但一次只显示一个，其余排队；
   带 `timeout` 的请求到点自动按 `cancelled` 关闭（与 pi 的默认行为一致）。
-- **并发**：一个工作目录只有一个 pi 进程，所以同一项目的多个会话不能同时跑。
-  跨项目可以（各开窗口/换工作目录）。
+- **并发的代价**：每个会话一个 node 进程（约 100–200MB），池子上限 4；超出后按 LRU 淘汰
+  非当前且空闲的 host，再切回去会重新启动。
 - **状态细带的容量**：状态拼成一行、挂件最多 4 行，超出的扩展输出会被截断。
 - **检查点的范围**：影子仓库排除了生成目录，所以回滚不会恢复 `.godot/`、`node_modules/`
   里的内容；`turns.json` 还没有清理策略。
@@ -392,7 +400,6 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 - **编辑器**：只读预览（标签页与语法高亮已有），没有写操作、没有 diff 视图、没有搜索。
 - **主题切换的代价**：重建界面会丢掉未提交的瞬时状态（正在预览的特效、未发送的弹窗）；
   主题选择本身持久化在 `Setting` 里。
-- **并发多会话**：一个工作目录一个 pi 进程，同时只能跑一个会话。
 - **附件/图片、粘贴截图**：已支持图片，尚无文件附件与音频。
 - **编辑器面板、语音、资产技能面板、演练场（workflow）**：只补了文件浏览与只读预览，其余未移植。
 - **审批/安全模式**：`confirm` 已能弹窗回写，但还没有配置界面去开关或编排扩展的审批策略。
@@ -404,6 +411,7 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 1. **协议稳固**（已完成）：启动/握手/流式/工具/结算，`test/bridge_smoke.gd` 通过。
 2. **性能基线**（已完成）：切换 565 条会话 = pi 的 `switch_session` ~0.5s + 读文件重建
    ~0.12s + 首屏 50 条气泡 ~0.3s。此前为 `get_entries` 6s + 全量重建 2s + 1200ms。
+   并发会话后，已打开过的 host 切回来不再起进程，只重放窗口（~0.3s）。
 3. **扩展弹窗**（已完成）：`confirm/select/input/editor` 渲染为居中卡片，回写
    `extension_ui_response`；`notify` 进顶栏。验收：`GAI_PI_FAKE_DIALOG=confirm|select|input`
    起的假弹窗可渲染并回写（真扩展审批待补一个用例）。
@@ -415,7 +423,8 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 8. **主题**（已完成）：`AppTheme` 映射外壳色，右上角深/浅切换，重建界面但保留会话与草稿。
 9. **聊天内容搜索**（已完成）：纯函数匹配 + 浮层结果 + 跳转高亮，远端命中重建窗口。
 10. **编辑器增强**（部分完成）：标签页与语法高亮已接；diff 视图、写操作、文件内搜索待做。
-11. **并发会话**：同一工作目录跑两个 pi 进程，侧栏角标显示运行中。
+11. **并发会话**（已完成）：一会话一进程，`test/concurrency_test.gd` 同时跑两个 prompt
+    都能拿到各自回答；侧栏 `●` 标运行中，池子上限 4。
 12. **导出单文件 exe**：装 Godot 导出模板后加 `export_presets.cfg`。
 
 ---
