@@ -567,7 +567,10 @@
       "new_while_running": "Stop the running turn before starting a new session",
       "models_failed": "Could not list models",
       "rename_active_only": "Switch to this session before renaming it",
-      "delete_while_running": "Stop the running turn before deleting a session"
+      "delete_while_running": "Stop the running turn before deleting a session",
+      "safety_on": "Safety mode: on",
+      "safety_off": "Safety mode: off",
+      "safety_blocked": "Turn aborted by safety mode"
     },
     "dialog": {
       "allow": "Allow",
@@ -611,7 +614,10 @@
       "copied": "Copied",
       "undo_edit": "↶ Undo this file edit",
       "restored": "reverted",
-      "restore_failed": "Could not restore the file"
+      "restore_failed": "Could not restore the file",
+      "safety_blocked": "Blocked {} by safety mode ({})",
+      "safety_outside_workspace": "path outside the workspace",
+      "safety_dangerous_command": "destructive command"
     },
     "session": {
       "pinned": "Pinned",
@@ -661,6 +667,16 @@
       "no_results": "No matches",
       "results": "{} matches",
       "tool": "Tool"
+    },
+    "memory": {
+      "toggle": "Memory",
+      "toggle_tooltip": "Edit the Markdown pi reads as context",
+      "title": "Memory",
+      "save": "Save",
+      "saved": "Saved {}",
+      "save_failed": "Could not save",
+      "empty": "No AGENTS.md, MEMORY.md, SYSTEM.md, SKILLS.md or .memory/*.md in this workspace",
+      "hint": "pi reads these at session start; a running session keeps its current context."
     }
   }
 }

@@ -352,7 +352,25 @@ pi 没有检查点概念，用用户自己的仓库会往里塞 commit。gai-pi 
 
 Node.js 与 pi 故意不打进包：它们用用户自己的安装、自己的 provider 凭据，这也符合整个项目的边界。
 
-## 十五、已验证的事实（可复跑）
+## 十五、安全模式与记忆
+
+**安全模式**（右上角盾牌，`AppSetting.KEY_SAFETY`）是外壳层的最后一道减速带：pi 在
+`tool_execution_start` 里公布工具名与参数，`SafetyGuard.inspect()` 检查两类东西——文件工具的
+目标路径是否还在工作目录内（`is_inside` 处理相对路径、`..`、前缀同名目录），以及 shell 命令
+是否命中高危词表（`rm -rf /` 这类真正抹盘的、`mkfs`/`dd`/`shutdown`/下载管道接 shell）。
+命中就 `abort()` 并往转录里写一条错误气泡。
+
+必须说清楚它的边界：pi 在它自己的进程里执行工具，RPC 没有「执行前审批」通道，所以这是
+**事后拦截**——命令可能已经跑了一半才被 abort。要真正的预执行拦截，得写一个 pi 扩展
+（`tool_call` 事件）并把确认弹窗接上；`SafetyGuard` 的规则可以直接搬过去。单元测试
+`test/safety_test.gd` 覆盖了路径越界、前缀同名目录、`rm -rf /` 与 `/tmp` 的区分、下载管道接 shell。
+
+**记忆面板**（右上角「记忆」）列出工作区里真实存在的 `AGENTS.md`、`MEMORY.md`、`SYSTEM.md`、
+`SKILLS.md` 和 `.memory/*.md`，右侧是可直接编辑并保存的代码框。pi 在会话开始时读取这些文件，
+所以面板里写明「正在运行的会话仍用旧上下文」——不假装能热更新。gai 的「后台记忆代理在压缩时
+整理 `.memory/`」没有移植：那需要另一个 agent 循环，属于 pi 扩展可以做的事。
+
+## 十六、已验证的事实（可复跑）
 
 ```bash
 # 1. GoDot 能驱动 pi 的 RPC（协议往返）
@@ -386,7 +404,7 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 
 ---
 
-## 十六、边界与已知不足
+## 十七、边界与已知不足
 
 明确没做，避免误以为已经具备：
 
@@ -404,11 +422,12 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
   主题选择本身持久化在 `Setting` 里。
 - **附件/图片、粘贴截图**：已支持图片，尚无文件附件与音频。
 - **编辑器面板、语音、资产技能面板、演练场（workflow）**：只补了文件浏览与只读预览，其余未移植。
-- **审批/安全模式**：`confirm` 已能弹窗回写，但还没有配置界面去开关或编排扩展的审批策略。
+- **安全模式**：事后 abort，不是预执行拦截；命令守卫是词表启发式，不可能穷尽。
+- **记忆**：没有后台整理代理，也没有把记忆注入会话的开关（pi 自己读 AGENTS.md/skills）。
 
 ---
 
-## 十七、路线图（每步带验收）
+## 十八、路线图（每步带验收）
 
 1. **协议稳固**（已完成）：启动/握手/流式/工具/结算，`test/bridge_smoke.gd` 通过。
 2. **性能基线**（已完成）：切换 565 条会话 = pi 的 `switch_session` ~0.5s + 读文件重建
@@ -427,11 +446,13 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 10. **编辑器增强**（部分完成）：标签页、语法高亮、diff 视图已接；写操作、文件内搜索待做。
 11. **并发会话**（已完成）：一会话一进程，`test/concurrency_test.gd` 同时跑两个 prompt
     都能拿到各自回答；侧栏 `●` 标运行中，池子上限 4。
-12. **导出单文件 exe**：装 Godot 导出模板后加 `export_presets.cfg`。
+12. **安全模式**（已完成，事后拦截）：规则在 `SafetyGuard`，`test/safety_test.gd` 覆盖。
+13. **记忆面板**（已完成）：读写项目上下文 Markdown；后台整理未做。
+14. **导出单文件 exe**：装 Godot 导出模板后加 `export_presets.cfg`。
 
 ---
 
-## 十八、目录
+## 十九、目录
 
 ```
 app/

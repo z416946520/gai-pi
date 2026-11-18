@@ -567,7 +567,10 @@
       "new_while_running": "先停止本轮运行，再新建会话",
       "models_failed": "拿不到模型列表",
       "rename_active_only": "先切换到该会话再重命名",
-      "delete_while_running": "先停止本轮运行再删除会话"
+      "delete_while_running": "先停止本轮运行再删除会话",
+      "safety_on": "安全模式：开",
+      "safety_off": "安全模式：关",
+      "safety_blocked": "安全模式已中止本轮"
     },
     "dialog": {
       "allow": "允许",
@@ -611,7 +614,10 @@
       "copied": "已复制",
       "undo_edit": "↶ 撤销这次文件修改",
       "restored": "已撤销",
-      "restore_failed": "恢复文件失败"
+      "restore_failed": "恢复文件失败",
+      "safety_blocked": "安全模式拦下了 {}（{}）",
+      "safety_outside_workspace": "路径在工作目录之外",
+      "safety_dangerous_command": "破坏性命令"
     },
     "session": {
       "pinned": "置顶",
@@ -661,6 +667,16 @@
       "no_results": "没有匹配",
       "results": "{} 处匹配",
       "tool": "工具"
+    },
+    "memory": {
+      "toggle": "记忆",
+      "toggle_tooltip": "编辑 pi 当作上下文的 Markdown",
+      "title": "记忆",
+      "save": "保存",
+      "saved": "已保存 {}",
+      "save_failed": "保存失败",
+      "empty": "这个工作目录里没有 AGENTS.md、MEMORY.md、SYSTEM.md、SKILLS.md 或 .memory/*.md",
+      "hint": "pi 在会话开始时读取这些文件；正在运行的会话仍用旧上下文。"
     }
   }
 }

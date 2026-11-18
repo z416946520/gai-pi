@@ -76,6 +76,8 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 | 贴图 | 输入框里 `Ctrl+V` 粘贴截图，或把图片拖到窗口上；发送前可移除 |
 | 看扩展状态 | 输入框上方的细条：`setStatus` 一行汇总，`setWidget` 最多 4 行 |
 | 搜索聊天记录 | `Ctrl+F` 或右上角 `⌕`，点结果跳转并高亮 |
+| 安全模式 | 右上角盾牌：文件工具越出工作目录、或命令命中高危词表时中止本轮 |
+| 记忆面板 | 右上角「记忆」：编辑 `AGENTS.md` / `MEMORY.md` / `SYSTEM.md` / `SKILLS.md` / `.memory/*.md` 并保存 |
 | 选模型 / thinking | 右上角 |
 | 切换界面语言 | 右上角 `中` / `EN`，立即生效并记住 |
 | 切换主题 | 右上角 `☀` / `☾`，深色与浅色互换并记住 |
@@ -106,7 +108,8 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 steer 队列、会话搜索/置顶/重命名/删除、模型与 thinking 切换、上下文压缩事件、扩展弹窗
 （`confirm`/`select`/`input`/`editor`）与 `notify`、扩展状态条与挂件、单文件修改撤销、
 每轮检查点与整轮回滚（影子 Git，不碰用户仓库）、文件浏览器（树 + 文本/Markdown/图片预览 + `@引用`）、
-图片粘贴与拖拽、深色/浅色主题切换、聊天记录搜索（跳转+高亮）、并发会话（一会话一进程）、
+图片粘贴与拖拽、深色/浅色主题切换、聊天记录搜索（跳转+高亮）、安全模式、记忆面板、
+并发会话（一会话一进程）、
 60 个视觉场景（切换即预览）、多工作目录、
 中英双语与运行时切换、便携打包。
 
@@ -136,10 +139,10 @@ pwsh -File tools/package.ps1 -NoZip   # 只要目录，方便先试跑
 | 图片进对话 | ✅ 粘贴/拖拽 → pi 的 ImageContent |
 | 多语言、深浅主题、MCP、技能 | ✅ 语言与主题自带；MCP/技能走 pi 扩展 |
 | 语音输入 | ❌ 未做 |
-| `.memory/` 后台记忆整理 | ❌ 未做（pi 用 AGENTS.md/skills/压缩） |
+| `.memory/` 后台记忆整理 | ⚠️ 面板可读写 AGENTS.md/MEMORY.md/SYSTEM.md/SKILLS.md/.memory/*.md；后台自动整理未做 |
 | 36 个资产技能 + 工作流画布 | ❌ 未做 |
 | 本地 MiniCPM-V 读图 | ❌ 未做（走 provider 的视觉能力） |
-| 安全模式（工作区限制/命令守卫） | ❌ 未做（依赖扩展的 confirm 弹窗） |
+| 安全模式（工作区限制/命令守卫） | ⚠️ 工作区路径 + 高危命令词表拦截，事后 abort（pi 不提供预执行拦截） |
 | Git Bash 窗口 / 单文件 exe | ❌ 未做（有便携包） |
 
 ## 文档

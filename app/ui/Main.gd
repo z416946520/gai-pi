@@ -61,6 +61,9 @@ var _language_button: Button = null
 var _editor_button: Button = null
 var _theme_button: Button = null
 var _search_button: Button = null
+var _safety_button: Button = null
+var _memory_button: Button = null
+var _memory_panel: MemoryPanel = null
 var _search_panel: PanelContainer = null
 var _search_field: LineEdit = null
 var _search_results: VBoxContainer = null
@@ -136,11 +139,18 @@ func _ready() -> void:
 	gdf.events.locale_changed.connect(apply_locale)
 	gdf.events.theme_changed.connect(on_theme_changed)
 	PiEvents.events.agent_end.connect(on_agent_end_checkpoint)
+	PiEvents.events.tool_execution_start.connect(on_tool_guard)
 	open_workspace(_initial_workspace())
 	var visual_override := OS.get_environment("GAI_PI_VISUAL").strip_edges()
 	if not visual_override.is_empty():
 		AppSetting.set_int(AppSetting.KEY_VISUAL, visual_override.to_int())
 		_visuals_picker.selected = clampi(visual_override.to_int(), 0, VisualStage.type_names().size() - 1)
+	var safety_env := OS.get_environment("GAI_PI_SAFETY").strip_edges()
+	if not safety_env.is_empty():
+		AppSetting.set_bool(AppSetting.KEY_SAFETY, safety_env == "1")
+		apply_locale()
+	if OS.get_environment("GAI_PI_MEMORY") == "1":
+		toggle_memory(true)
 	if OS.get_environment("GAI_PI_EDITOR") == "1":
 		toggle_editor(true)
 		var editor_file := OS.get_environment("GAI_PI_EDITOR_FILE").strip_edges()
@@ -273,6 +283,12 @@ func build_ui() -> void:
 
 	body.add_child(build_sidebar())
 	body.add_child(build_chat_area())
+	_memory_panel = MemoryPanel.new()
+	_memory_panel.custom_minimum_size = Vector2(520, 0)
+	_memory_panel.visible = false
+	_memory_panel.status.connect(func(message: String) -> void: show_status(message))
+	body.add_child(_memory_panel)
+
 	_editor = EditorPanel.new()
 	_editor.custom_minimum_size = Vector2(620, 0)
 	_editor.visible = false
@@ -348,6 +364,14 @@ func build_top_bar() -> Control:
 	_editor_button = make_flat_button("", "")
 	_editor_button.pressed.connect(func() -> void: toggle_editor(not _editor.visible))
 	row.add_child(_editor_button)
+
+	_memory_button = make_flat_button("", "")
+	_memory_button.pressed.connect(func() -> void: toggle_memory(not _memory_panel.visible))
+	row.add_child(_memory_button)
+
+	_safety_button = make_flat_button("", "")
+	_safety_button.pressed.connect(toggle_safety)
+	row.add_child(_safety_button)
 
 	_search_button = make_flat_button("⌕", "")
 	_search_button.pressed.connect(func() -> void: toggle_search(not (_search_panel != null and _search_panel.visible)))
@@ -760,6 +784,8 @@ func open_workspace(path: String) -> void:
 	_checkpoints.setup(path)
 	if _editor != null:
 		_editor.set_workspace(path)
+	if _memory_panel != null:
+		_memory_panel.set_workspace(path)
 	var key := "new:%d" % _new_session_seq
 	_new_session_seq += 1
 	create_host(key, StringUtils.EMPTY)
@@ -1841,6 +1867,43 @@ func scroll_to_bubble(bubble: Control) -> void:
 
 
 # ---------------------------------------------------------------------------
+# Safety mode and memory
+# ---------------------------------------------------------------------------
+
+func toggle_memory(show_memory: bool) -> void:
+	if _memory_panel == null:
+		return
+	if show_memory and not _memory_panel.is_built():
+		_memory_panel.setup(_workspace_path)
+	_memory_panel.visible = show_memory
+	if show_memory:
+		_memory_panel.reload()
+
+
+func safety_enabled() -> bool:
+	return AppSetting.get_bool(AppSetting.KEY_SAFETY, false)
+
+
+func toggle_safety() -> void:
+	AppSetting.set_bool(AppSetting.KEY_SAFETY, not safety_enabled())
+	apply_locale()
+	show_status(T.t("gai_pi.status.safety_on") if safety_enabled() else T.t("gai_pi.status.safety_off"))
+
+
+## Best-effort guard: pi announces the call, the shell aborts the run when it looks unsafe.
+func on_tool_guard(session_id: int, _tool_call_id: String, tool_name: String, args: Dictionary) -> void:
+	if not safety_enabled() or session == null or session.local_id != session_id:
+		return
+	var reason := SafetyGuard.inspect(tool_name, args, _workspace_path)
+	if reason.is_empty():
+		return
+	if workspace_host != null:
+		workspace_host.abort()
+	session.add_error_entry(T.t("gai_pi.chat.safety_blocked", [tool_name, T.t("gai_pi.chat.safety_" + reason)]))
+	show_status(T.t("gai_pi.status.safety_blocked"))
+
+
+# ---------------------------------------------------------------------------
 # Theme
 # ---------------------------------------------------------------------------
 
@@ -2104,6 +2167,13 @@ func apply_locale() -> void:
 	_editor_button.text = T.t("gai_pi.editor.toggle")
 	_editor_button.tooltip_text = T.t("gai_pi.editor.toggle_tooltip")
 	_search_button.tooltip_text = T.t("gai_pi.search.button")
+	_memory_button.text = T.t("gai_pi.memory.toggle")
+	_memory_button.tooltip_text = T.t("gai_pi.memory.toggle_tooltip")
+	if _memory_panel != null:
+		_memory_panel.apply_locale()
+	_safety_button.text = "⛨"
+	_safety_button.tooltip_text = T.t("gai_pi.topbar.safety_on") if safety_enabled() else T.t("gai_pi.topbar.safety_off")
+	_safety_button.add_theme_color_override("font_color", AppTheme.ink(Color("#ffd479")) if safety_enabled() else ThemeColor.body_color)
 	if _search_field != null:
 		_search_field.placeholder_text = T.t("gai_pi.search.placeholder")
 	_theme_button.text = "☀" if AppTheme.is_dark() else "☾"
