@@ -10,3 +10,7 @@
 # Reference clones / probes
 _ref_gai/
 _probe/
+
+# Portable package output
+.dist/
+dist/

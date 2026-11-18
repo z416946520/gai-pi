@@ -537,7 +537,9 @@
       "send": "Send",
       "steer": "Steer",
       "stop": "■ Stop",
-      "stop_tooltip": "Abort the run"
+      "stop_tooltip": "Abort the run",
+      "remove_image": "Remove image",
+      "image_prompt": "Describe the attached image."
     },
     "empty": {
       "subtitle": "pi is loaded here — ask it to read, change, or verify this workspace."

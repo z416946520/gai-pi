@@ -73,6 +73,8 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 | 撤销一次文件修改 | `edit`/`write` 气泡下方的「↶ 撤销这次文件修改」 |
 | 回滚整轮 | 每个回合顶部的「检查点」气泡，点「↶ 撤销本轮」并确认 |
 | 浏览工作目录 | 右上角「文件」：文件树 + 文本/Markdown/图片预览，`引用` 把 `@路径` 塞进输入框 |
+| 贴图 | 输入框里 `Ctrl+V` 粘贴截图，或把图片拖到窗口上；发送前可移除 |
+| 看扩展状态 | 输入框上方的细条：`setStatus` 一行汇总，`setWidget` 最多 4 行 |
 | 选模型 / thinking | 右上角 |
 | 切换界面语言 | 右上角 `中` / `EN`，立即生效并记住 |
 | 换视觉场景 | 右上角下拉（60 个） |
@@ -90,6 +92,7 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 | `GAI_PI_SESSION` | 启动后打开指定会话（uuid 或 jsonl 路径） |
 | `GAI_PI_FAKE_DIALOG` | 起一个假扩展弹窗（`confirm`/`select`/`input`/`editor`），用于检查样式 |
 | `GAI_PI_EDITOR` / `GAI_PI_EDITOR_FILE` | 启动即打开文件浏览器，并预览指定文件 |
+| `GAI_PI_ATTACH_IMAGE` | 启动时就把指定图片挂到输入框（验收图片输入） |
 | `GAI_PI_LOCALE` | 强制界面语言（`zh` / `en`），用于截图与验收 |
 | `GAI_PI_SWITCH_LOCALE` | 启动 2.5 秒后自动切到另一种语言，用于验证热切换 |
 
@@ -97,12 +100,23 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 
 已完成：启动握手、流式文本与思考、工具气泡（含 `edit` 内联 diff）、运行/停止、
 steer 队列、会话搜索/置顶/重命名/删除、模型与 thinking 切换、上下文压缩事件、扩展弹窗
-（`confirm`/`select`/`input`/`editor`）与 `notify`、单文件修改撤销、每轮检查点与整轮回滚
-（影子 Git，不碰用户仓库）、文件浏览器（树 + 文本/Markdown/图片预览 + `@引用`）、
-60 个视觉场景（切换即预览）、多工作目录、中英双语与运行时切换。
+（`confirm`/`select`/`input`/`editor`）与 `notify`、扩展状态条与挂件、单文件修改撤销、
+每轮检查点与整轮回滚（影子 Git，不碰用户仓库）、文件浏览器（树 + 文本/Markdown/图片预览 + `@引用`）、
+图片粘贴与拖拽、60 个视觉场景（切换即预览）、多工作目录、中英双语与运行时切换、便携打包。
 
-未完成（详见 [ARCHITECTURE.md](ARCHITECTURE.md#十二边界与已知不足)）：图片粘贴、
-扩展状态栏/挂件、并发多会话、聊天记录搜索、主题切换、编辑器写操作、打包分发。
+未完成（详见 [ARCHITECTURE.md](ARCHITECTURE.md#十三边界与已知不足)）：主题切换、
+并发多会话、聊天记录搜索、编辑器写操作、导出为单文件 exe。
+
+## 打包
+
+```bash
+pwsh -File tools/package.ps1          # dist/gai-pi-portable/ + dist/gai-pi-portable.zip
+pwsh -File tools/package.ps1 -NoZip   # 只要目录，方便先试跑
+```
+
+包里是「引擎 + 工程 + 导入缓存」：180MB 目录，压完 90MB。不改用 Godot 导出模板，所以不需要
+下载那 700MB 模板；`gai-pi.cmd` 布局不变，双击即可。Node.js 与 pi 故意不打进去——它们用你机器上
+已经装好、已经配好凭据的那套。
 
 ## 文档
 

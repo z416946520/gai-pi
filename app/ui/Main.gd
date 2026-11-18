@@ -6,6 +6,8 @@ const SIDEBAR_WIDTH := 300
 const SIDEBAR_MIN_WIDTH := 240
 const TOP_BAR_HEIGHT := 46
 const COMPOSER_HEIGHT := 112
+## Taller composer while image chips are attached; the transcript hides behind it.
+const COMPOSER_HEIGHT_ATTACHED := 150
 const FLUSH_INTERVAL_MS := 80
 ## Millisecond budget for replaying a session per frame; 400+ entries must not stall a frame.
 const BUILD_BUDGET_MS := 8
@@ -58,6 +60,14 @@ var _workspace_dialog: FileDialog = null
 var _language_button: Button = null
 var _editor_button: Button = null
 var _editor: EditorPanel = null
+var _attachments: Array[Dictionary] = []
+var _attachment_row: HBoxContainer = null
+var _runtime_strip: PanelContainer = null
+var _strip_row: HBoxContainer = null
+var _widget_label: Label = null
+var _strip_status_label: Label = null
+var _extension_status: Dictionary[String, String] = {}
+var _extension_widgets: Dictionary[String, PackedStringArray] = {}
 var _last_usage: OpenAiUsage = null
 var _sidebar_failed: bool = false
 var _build_queue: Array[ChatEntry] = []
@@ -105,12 +115,18 @@ func _ready() -> void:
 		var editor_file := OS.get_environment("GAI_PI_EDITOR_FILE").strip_edges()
 		if not editor_file.is_empty():
 			_editor.show_file(editor_file)
+	get_window().files_dropped.connect(on_files_dropped)
 	get_window().title = "gai-pi"
 	_input_field.grab_focus()
 	_prompt = ModalPrompt.new()
 	add_child(_prompt)
 	load_pins()
 	apply_locale()
+	var initial_image := OS.get_environment("GAI_PI_ATTACH_IMAGE").strip_edges()
+	if not initial_image.is_empty():
+		var image := Image.new()
+		if image.load(initial_image) == OK:
+			attach_image(image, initial_image.get_file())
 	var preview_visual := OS.get_environment("GAI_PI_PREVIEW_VISUAL").strip_edges()
 	if not preview_visual.is_empty():
 		_preview_visual_type = preview_visual.to_int()
@@ -407,6 +423,47 @@ func build_chat_area() -> Control:
 	_load_earlier_button.pressed.connect(on_load_earlier_pressed)
 	area.add_child(_load_earlier_button)
 
+	_runtime_strip = PanelContainer.new()
+	_runtime_strip.anchor_left = 0.0
+	_runtime_strip.anchor_right = 1.0
+	_runtime_strip.anchor_top = 1.0
+	_runtime_strip.anchor_bottom = 1.0
+	_runtime_strip.offset_left = Margin.ma_8
+	_runtime_strip.offset_right = -Margin.ma_8
+	_runtime_strip.offset_top = -COMPOSER_HEIGHT - 8
+	_runtime_strip.offset_bottom = -COMPOSER_HEIGHT - 4
+	_runtime_strip.grow_vertical = GROW_DIRECTION_BEGIN
+	_runtime_strip.mouse_filter = MOUSE_FILTER_IGNORE
+	_runtime_strip.visible = false
+	var strip_style := StyleBoxFlat.new()
+	strip_style.bg_color = Color(Colors.DARK_CONTROL_SURFACE, 0.86)
+	strip_style.set_corner_radius_all(8)
+	strip_style.content_margin_left = Margin.ma_2
+	strip_style.content_margin_right = Margin.ma_2
+	strip_style.content_margin_top = Margin.ma_1
+	strip_style.content_margin_bottom = Margin.ma_1
+	_runtime_strip.add_theme_stylebox_override("panel", strip_style)
+	area.add_child(_runtime_strip)
+
+	_strip_row = HBoxContainer.new()
+	_strip_row.add_theme_constant_override("separation", Margin.ma_2)
+	_runtime_strip.add_child(_strip_row)
+
+	_widget_label = Label.new()
+	_widget_label.add_theme_font_override("font", Fonts.code())
+	_widget_label.add_theme_font_size_override("font_size", Typography.body_small - 1)
+	_widget_label.add_theme_color_override("font_color", ThemeColor.body_color.darkened(0.15))
+	_strip_row.add_child(_widget_label)
+
+	_strip_status_label = Label.new()
+	_strip_status_label.clip_text = true
+	_strip_status_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_strip_status_label.size_flags_horizontal = SIZE_EXPAND_FILL
+	_strip_status_label.add_theme_font_override("font", Fonts.code())
+	_strip_status_label.add_theme_font_size_override("font_size", Typography.body_small - 1)
+	_strip_status_label.add_theme_color_override("font_color", ThemeColor.theme_color)
+	_strip_row.add_child(_strip_status_label)
+
 	_empty_hint = VBoxContainer.new()
 	_empty_hint.set_anchors_preset(PRESET_FULL_RECT)
 	_empty_hint.offset_bottom = -COMPOSER_HEIGHT
@@ -445,6 +502,11 @@ func build_composer() -> Control:
 	var column := VBoxContainer.new()
 	column.add_theme_constant_override("separation", Margin.ma_1)
 	_composer.add_child(column)
+
+	_attachment_row = HBoxContainer.new()
+	_attachment_row.add_theme_constant_override("separation", Margin.ma_2)
+	_attachment_row.visible = false
+	column.add_child(_attachment_row)
 
 	_input_field = TextEdit.new()
 	_input_field.placeholder_text = T.t("gai_pi.composer.placeholder")
@@ -540,6 +602,8 @@ func open_workspace(path: String) -> void:
 	workspace_host.prompt_done.connect(on_prompt_done)
 	workspace_host.dialog_requested.connect(on_dialog_requested)
 	workspace_host.notification.connect(on_notification)
+	workspace_host.status_changed.connect(on_extension_status)
+	workspace_host.widget_changed.connect(on_extension_widget)
 	AppSetting.set_string(AppSetting.KEY_WORKSPACE, path)
 	PiEvents.events.workspace_changed.emit(path)
 	_workspace_button.text = _short_path(path)
@@ -898,6 +962,13 @@ func _input(event: InputEvent) -> void:
 		return
 	if _input_field == null or not _input_field.has_focus():
 		return
+	if key.keycode == KEY_V and (key.ctrl_pressed or key.meta_pressed) and DisplayServer.clipboard_has_image():
+		if DisplayServer.clipboard_get().strip_edges().is_empty():
+			var image := DisplayServer.clipboard_get_image()
+			if image != null and not image.is_empty():
+				get_viewport().set_input_as_handled()
+				attach_image(image, "clipboard.png")
+				return
 	if key.keycode != KEY_ENTER and key.keycode != KEY_KP_ENTER:
 		return
 	if key.shift_pressed:
@@ -910,7 +981,8 @@ func on_send_pressed() -> void:
 	if workspace_host == null or session == null or _input_field == null:
 		return
 	var text := _input_field.text.strip_edges()
-	if text.is_empty():
+	var images := pending_images()
+	if text.is_empty() and images.is_empty():
 		return
 	var behavior := StringUtils.EMPTY
 	if workspace_host.is_streaming:
@@ -919,7 +991,11 @@ func on_send_pressed() -> void:
 	_follow_tail = true
 	if behavior.is_empty():
 		begin_checkpoint()
-	workspace_host.prompt(text, behavior)
+	if text.is_empty():
+		text = T.t("gai_pi.composer.image_prompt")
+	_attachments.clear()
+	rebuild_attachment_row()
+	workspace_host.prompt(text, behavior, images)
 	scroll_to_bottom()
 
 
@@ -1360,6 +1436,156 @@ func on_editor_reference(path: String) -> void:
 	_input_field.text = (existing + " " + reference).strip_edges() if not existing.is_empty() else reference
 	_input_field.grab_focus()
 	_input_field.set_caret_line(maxi(0, _input_field.get_line_count() - 1))
+
+
+# ---------------------------------------------------------------------------
+# Attachments
+# ---------------------------------------------------------------------------
+
+const IMAGE_EXTS := ["png", "jpg", "jpeg", "webp", "bmp", "gif"]
+const MAX_ATTACHMENTS := 5
+const MAX_IMAGE_EDGE := 1600
+
+
+## Queues an image for the next prompt; pi takes it as base64 ImageContent.
+func attach_image(image: Image, name: String) -> void:
+	if image == null or image.is_empty() or _attachments.size() >= MAX_ATTACHMENTS:
+		return
+	var normalized := image.duplicate()
+	if normalized.get_width() > MAX_IMAGE_EDGE or normalized.get_height() > MAX_IMAGE_EDGE:
+		var factor := float(MAX_IMAGE_EDGE) / float(maxi(normalized.get_width(), normalized.get_height()))
+		normalized.resize(
+			maxi(1, int(normalized.get_width() * factor)),
+			maxi(1, int(normalized.get_height() * factor)),
+			Image.INTERPOLATE_LANCZOS
+		)
+	_attachments.append({
+		"type": "image",
+		"data": Marshalls.raw_to_base64(normalized.save_png_to_buffer()),
+		"mimeType": "image/png",
+		"name": name,
+		"texture": ImageTexture.create_from_image(normalized),
+	})
+	rebuild_attachment_row()
+
+
+func rebuild_attachment_row() -> void:
+	if _attachment_row == null:
+		return
+	for child in _attachment_row.get_children():
+		child.queue_free()
+	_attachment_row.visible = not _attachments.is_empty()
+	apply_composer_height()
+	for index in _attachments.size():
+		var chip := PanelContainer.new()
+		var chip_style := StyleBoxFlat.new()
+		chip_style.bg_color = Colors.DARK_SURFACE_CONTAINER
+		chip_style.set_corner_radius_all(6)
+		chip_style.content_margin_left = Margin.ma_1
+		chip_style.content_margin_right = Margin.ma_1
+		chip_style.content_margin_top = 2
+		chip_style.content_margin_bottom = 2
+		chip.add_theme_stylebox_override("panel", chip_style)
+		_attachment_row.add_child(chip)
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", Margin.ma_1)
+		chip.add_child(row)
+		var thumb := TextureRect.new()
+		thumb.texture = _attachments[index]["texture"]
+		thumb.custom_minimum_size = Vector2(26, 26)
+		thumb.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		thumb.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		row.add_child(thumb)
+		var remove := Button.new()
+		remove.text = "✕"
+		remove.flat = true
+		remove.focus_mode = FOCUS_NONE
+		remove.custom_minimum_size = Vector2(20, 20)
+		remove.add_theme_font_override("font", Fonts.code())
+		remove.add_theme_font_size_override("font_size", Typography.body_small - 2)
+		remove.tooltip_text = T.t("gai_pi.composer.remove_image")
+		remove.pressed.connect(func() -> void:
+			_attachments.remove_at(index)
+			rebuild_attachment_row()
+		)
+		row.add_child(remove)
+
+
+## The composer and the transcript reserve only what the current attachments need.
+func apply_composer_height() -> void:
+	if _composer == null or _scroll == null:
+		return
+	var height := COMPOSER_HEIGHT_ATTACHED if not _attachments.is_empty() else COMPOSER_HEIGHT
+	_composer.offset_top = -height
+	_scroll.offset_bottom = -height
+	if _empty_hint != null:
+		_empty_hint.offset_bottom = -height
+	if _runtime_strip != null:
+		_runtime_strip.offset_top = -height - 8
+		_runtime_strip.offset_bottom = -height - 4
+
+
+func pending_images() -> Array:
+	var images: Array = []
+	for attachment in _attachments:
+		images.append({
+			"type": "image",
+			"data": str(attachment.get("data", StringUtils.EMPTY)),
+			"mimeType": str(attachment.get("mimeType", "image/png")),
+		})
+	return images
+
+
+## Files dropped anywhere on the window attach when they are images.
+func on_files_dropped(files: PackedStringArray) -> void:
+	for path in files:
+		if not IMAGE_EXTS.has(path.get_extension().to_lower()):
+			continue
+		var image := Image.new()
+		if image.load(path) == OK:
+			attach_image(image, path.get_file())
+
+
+# ---------------------------------------------------------------------------
+# Extension status and widgets
+# ---------------------------------------------------------------------------
+
+func on_extension_status(key: String, text: String) -> void:
+	if key.is_empty():
+		return
+	if text.strip_edges().is_empty():
+		_extension_status.erase(key)
+	else:
+		_extension_status[key] = text
+	rebuild_runtime_strip()
+
+
+func on_extension_widget(key: String, lines: Array, _placement: String) -> void:
+	if key.is_empty():
+		return
+	var cleaned := TextSanitize.widget_lines(lines)
+	if cleaned.is_empty():
+		_extension_widgets.erase(key)
+	else:
+		_extension_widgets[key] = cleaned
+	rebuild_runtime_strip()
+
+
+func rebuild_runtime_strip() -> void:
+	if _runtime_strip == null:
+		return
+	var widget_lines := PackedStringArray()
+	for key in _extension_widgets:
+		widget_lines.append_array(_extension_widgets[key])
+	_widget_label.text = "\n".join(widget_lines)
+	_widget_label.visible = not widget_lines.is_empty()
+	var statuses := PackedStringArray()
+	for key in _extension_status:
+		statuses.append(_extension_status[key])
+	_strip_status_label.text = "  ·  ".join(statuses)
+	_strip_status_label.tooltip_text = _strip_status_label.text
+	_strip_status_label.visible = not statuses.is_empty()
+	_runtime_strip.visible = _widget_label.visible or _strip_status_label.visible
 
 
 # ---------------------------------------------------------------------------

@@ -253,6 +253,8 @@ func localized_title() -> String:
 
 
 func meta_text() -> String:
+	if entry.details.has("images"):
+		return "🖼 " + str(entry.details.get("images", "0"))
 	if entry.details.has("reverted"):
 		return T.t("gai_pi.checkpoint.reverted")
 	if entry.details.has("restored"):

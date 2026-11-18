@@ -537,7 +537,9 @@
       "send": "发送",
       "steer": "插话",
       "stop": "■ 停止",
-      "stop_tooltip": "中止本轮运行"
+      "stop_tooltip": "中止本轮运行",
+      "remove_image": "移除图片",
+      "image_prompt": "看一下这张图。"
     },
     "empty": {
       "subtitle": "pi 已在这个工作目录待命，让它读、改、验证都行。"

@@ -16,6 +16,8 @@ signal streaming_changed(streaming: bool)
 signal prompt_done(disposition: String)
 signal dialog_requested(data: Dictionary)
 signal notification(message: String, level: String)
+signal status_changed(key: String, text: String)
+signal widget_changed(key: String, lines: Array, placement: String)
 
 const LAUNCHER_CMD := "launch.cmd"
 const LAUNCHER_SH := "launch.sh"
@@ -146,14 +148,17 @@ func switch_session(session_path: String) -> void:
 
 
 ## Sends a user message. [param behavior] is "", "steer", or "followUp".
-func prompt(text: String, behavior: String = StringUtils.EMPTY) -> void:
+## [param images] holds pi `ImageContent` dictionaries (base64 data + mimeType).
+func prompt(text: String, behavior: String = StringUtils.EMPTY, images: Array = []) -> void:
 	if not ensure_client() or session == null:
 		return
-	if text.strip_edges().is_empty():
+	if text.strip_edges().is_empty() and images.is_empty():
 		return
 	session.last_user_text = text
-	session.add_user_entry(text)
+	var entry := session.add_user_entry(text, images.size())
 	var params := {"message": text}
+	if not images.is_empty():
+		params["images"] = images
 	if not behavior.is_empty():
 		params["streamingBehavior"] = behavior
 	var on_result := func(result: Dictionary) -> void:
@@ -328,8 +333,14 @@ func on_event(data: Dictionary) -> void:
 func on_ui_request(data: Dictionary) -> void:
 	var method := str(data.get("method", StringUtils.EMPTY))
 	match method:
-		"setStatus", "setWidget", "setTitle":
-			# Status chips and widgets have no shell surface yet.
+		"setStatus":
+			status_changed.emit(str(data.get("statusKey", StringUtils.EMPTY)), TextSanitize.single_line(str(data.get("statusText", StringUtils.EMPTY))))
+			return
+		"setWidget":
+			var lines: Array = PiSession.as_array(data.get("widgetLines", []))
+			widget_changed.emit(str(data.get("widgetKey", StringUtils.EMPTY)), lines, str(data.get("widgetPlacement", "aboveEditor")))
+			return
+		"setTitle":
 			return
 		"notify":
 			notification.emit(str(data.get("message", StringUtils.EMPTY)), str(data.get("notifyType", "info")))

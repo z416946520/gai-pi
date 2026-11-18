@@ -429,9 +429,12 @@ func mark_checkpoint_reverted(entry: ChatEntry) -> void:
 	entry_updated.emit(entry, "content")
 
 
-func add_user_entry(text: String) -> void:
+func add_user_entry(text: String, image_count: int = 0) -> ChatEntry:
 	var entry := ChatEntry.new(ChatEntry.KIND_USER, ChatEntry.TITLE_USER, text)
+	if image_count > 0:
+		entry.details["images"] = str(image_count)
 	append_entry(entry)
+	return entry
 
 
 func add_error_entry(text: String) -> void:
