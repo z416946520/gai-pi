@@ -56,6 +56,8 @@ var _stop_button: Button = null
 var _hint_label: Label = null
 var _workspace_dialog: FileDialog = null
 var _language_button: Button = null
+var _editor_button: Button = null
+var _editor: EditorPanel = null
 var _last_usage: OpenAiUsage = null
 var _sidebar_failed: bool = false
 var _build_queue: Array[ChatEntry] = []
@@ -68,6 +70,10 @@ var _session_search: LineEdit = null
 var _prompt: ModalPrompt = null
 var _pinned_paths: Array[String] = []
 var _pending_delete: String = StringUtils.EMPTY
+var _checkpoints: CheckpointManager = null
+var _turn_start_commit: String = StringUtils.EMPTY
+var _turn_entry: ChatEntry = null
+var _turn_index: int = 0
 var _preview_visual_at: int = 0
 var _preview_visual_type: int = -1
 var _switch_locale_at: int = 0
@@ -88,11 +94,17 @@ func _ready() -> void:
 	ThemeColor.load_theme()
 	build_ui()
 	gdf.events.locale_changed.connect(apply_locale)
+	PiEvents.events.agent_end.connect(on_agent_end_checkpoint)
 	open_workspace(_initial_workspace())
 	var visual_override := OS.get_environment("GAI_PI_VISUAL").strip_edges()
 	if not visual_override.is_empty():
 		AppSetting.set_int(AppSetting.KEY_VISUAL, visual_override.to_int())
 		_visuals_picker.selected = clampi(visual_override.to_int(), 0, VisualStage.type_names().size() - 1)
+	if OS.get_environment("GAI_PI_EDITOR") == "1":
+		toggle_editor(true)
+		var editor_file := OS.get_environment("GAI_PI_EDITOR_FILE").strip_edges()
+		if not editor_file.is_empty():
+			_editor.show_file(editor_file)
 	get_window().title = "gai-pi"
 	_input_field.grab_focus()
 	_prompt = ModalPrompt.new()
@@ -115,6 +127,7 @@ func _process(_delta: float) -> void:
 	if workspace_host != null:
 		workspace_host.poll()
 		_poll_errors()
+	AsyncProcess.poll_all()
 	var now := Time.get_ticks_msec()
 	if now - _last_flush >= FLUSH_INTERVAL_MS and not _dirty_bubbles.is_empty():
 		_last_flush = now
@@ -155,6 +168,7 @@ func _notification(what: int) -> void:
 
 
 func _exit_tree() -> void:
+	AsyncProcess.stop_all()
 	if workspace_host != null:
 		workspace_host.stop()
 
@@ -184,6 +198,12 @@ func build_ui() -> void:
 
 	body.add_child(build_sidebar())
 	body.add_child(build_chat_area())
+	_editor = EditorPanel.new()
+	_editor.custom_minimum_size = Vector2(620, 0)
+	_editor.visible = false
+	_editor.closed.connect(func() -> void: toggle_editor(false))
+	_editor.reference_requested.connect(on_editor_reference)
+	body.add_child(_editor)
 
 
 func build_top_bar() -> Control:
@@ -243,6 +263,10 @@ func build_top_bar() -> Control:
 	_visuals_picker.selected = clampi(AppSetting.get_int(AppSetting.KEY_VISUAL, 0), 0, VisualStage.type_names().size() - 1)
 	_visuals_picker.item_selected.connect(on_visual_selected)
 	row.add_child(_visuals_picker)
+
+	_editor_button = make_flat_button("", "")
+	_editor_button.pressed.connect(func() -> void: toggle_editor(not _editor.visible))
+	row.add_child(_editor_button)
 
 	_language_button = make_flat_button("", "")
 	_language_button.pressed.connect(on_language_pressed)
@@ -521,7 +545,17 @@ func open_workspace(path: String) -> void:
 	_workspace_button.text = _short_path(path)
 	_sidebar_failed = false
 	_sidebar_status.text = T.t("gai_pi.sidebar.starting")
+	_checkpoints = CheckpointManager.new()
+	_checkpoints.failed.connect(func(message: String) -> void: show_status(message))
+	_checkpoints.setup(path)
+	workspace_host.checkpoints = _checkpoints
 	workspace_host.start()
+	if _editor != null:
+		_editor.set_workspace(path)
+
+
+func on_agent_end_checkpoint(_session_id: int, _error_message: String) -> void:
+	finish_checkpoint()
 
 
 func on_prompt_done(_disposition: String) -> void:
@@ -684,6 +718,7 @@ func make_bubble(entry: ChatEntry) -> ChatBubble:
 	bubble.copy_requested.connect(on_copy_entry)
 	bubble.prefill_requested.connect(on_prefill_entry)
 	bubble.restore_requested.connect(on_restore_entry)
+	bubble.revert_requested.connect(on_revert_entry)
 	return bubble
 
 
@@ -882,6 +917,8 @@ func on_send_pressed() -> void:
 		behavior = "steer" if AppSetting.get_string(AppSetting.KEY_STEERING, "steer") == "steer" else "followUp"
 	_input_field.text = StringUtils.EMPTY
 	_follow_tail = true
+	if behavior.is_empty():
+		begin_checkpoint()
 	workspace_host.prompt(text, behavior)
 	scroll_to_bottom()
 
@@ -1227,6 +1264,105 @@ func build_session_row(meta: Dictionary, is_active: bool, pinned: bool = false) 
 
 
 # ---------------------------------------------------------------------------
+# Checkpoints
+# ---------------------------------------------------------------------------
+
+## Opens a checkpoint before a fresh turn; steering messages stay inside the same turn.
+func begin_checkpoint() -> void:
+	if _checkpoints == null or not _checkpoints.enabled or session == null:
+		return
+	if not _turn_start_commit.is_empty():
+		return
+	# The entry is created before the prompt so it sits at the top of the turn; the commit lands
+	# a moment later and fills in the revert handle.
+	_turn_entry = session.add_checkpoint_entry(_turn_index + 1, StringUtils.EMPTY)
+	# Timestamp the checkpoint before the prompt is sent, so replay puts it above the message.
+	var stamp := int(Time.get_unix_time_from_system() * 1000.0)
+	_checkpoints.begin_turn(func(turn: int, commit: String) -> void:
+		if session == null:
+			return
+		if turn < 0 or commit.is_empty():
+			session.finish_checkpoint_entry(_turn_entry, T.t("gai_pi.checkpoint.unavailable"))
+			_turn_entry = null
+			return
+		_turn_start_commit = commit
+		_turn_index = turn
+		_turn_entry.timestamp = stamp
+		if _turn_entry != null:
+			_turn_entry.id = "checkpoint-%d" % turn
+			_turn_entry.details["checkpoint"] = commit
+			_turn_entry.details["turn"] = str(turn)
+		if session != null:
+			_checkpoints.save_turn_record(session.pi_id, turn, commit, StringUtils.EMPTY, stamp)
+		if not session.running:
+			finish_checkpoint()
+	)
+
+
+func finish_checkpoint() -> void:
+	if _turn_start_commit.is_empty() or _checkpoints == null:
+		return
+	var start := _turn_start_commit
+	var turn := _turn_index
+	var entry := _turn_entry
+	var session_id := session.pi_id if session != null else StringUtils.EMPTY
+	_turn_start_commit = StringUtils.EMPTY
+	_turn_entry = null
+	_checkpoints.end_turn(turn, start, func(files: Array) -> void:
+		var summary := _checkpoints.format_file_list(files)
+		if session != null and entry != null and is_instance_valid(entry):
+			session.finish_checkpoint_entry(entry, summary)
+		_checkpoints.set_turn_summary(session_id, turn, summary)
+	)
+
+func on_revert_entry(entry: ChatEntry) -> void:
+	if _checkpoints == null or not _checkpoints.enabled or workspace_host == null:
+		return
+	if workspace_host.is_streaming:
+		show_status(T.t("gai_pi.status.switch_while_running"))
+		return
+	var commit := str(entry.details.get("checkpoint", StringUtils.EMPTY))
+	var turn := int(entry.details.get("turn", "0"))
+	if commit.is_empty():
+		return
+	_prompt.ask_confirm(T.t("gai_pi.checkpoint.revert_title"), T.t("gai_pi.checkpoint.revert_message"), func() -> void:
+		_checkpoints.revert_turn(turn, commit, func(ok: bool) -> void:
+			if ok and session != null:
+				session.mark_checkpoint_reverted(entry)
+				_checkpoints.set_turn_summary(session.pi_id, turn, entry.body, true)
+				show_status(T.t("gai_pi.checkpoint.revert_done"))
+			else:
+				show_status(T.t("gai_pi.checkpoint.revert_failed"))
+		)
+	)
+
+
+# ---------------------------------------------------------------------------
+# Editor
+# ---------------------------------------------------------------------------
+
+func toggle_editor(show_editor: bool) -> void:
+	if _editor == null:
+		return
+	if show_editor and not _editor.is_built():
+		_editor.setup(_editor.workspace)
+	_editor.visible = show_editor
+	if show_editor and _editor.is_built():
+		_editor.reload()
+
+
+func on_editor_reference(path: String) -> void:
+	if _input_field == null:
+		return
+	var relative := _editor.relative_path(path).replace("\\", "/")
+	var reference := "@" + relative
+	var existing := _input_field.text.strip_edges()
+	_input_field.text = (existing + " " + reference).strip_edges() if not existing.is_empty() else reference
+	_input_field.grab_focus()
+	_input_field.set_caret_line(maxi(0, _input_field.get_line_count() - 1))
+
+
+# ---------------------------------------------------------------------------
 # Language
 # ---------------------------------------------------------------------------
 
@@ -1238,6 +1374,10 @@ func apply_locale() -> void:
 	_model_button.tooltip_text = T.t("gai_pi.topbar.choose_model")
 	_thinking_button.tooltip_text = T.t("gai_pi.topbar.thinking")
 	_visuals_picker.tooltip_text = T.t("gai_pi.topbar.visual")
+	_editor_button.text = T.t("gai_pi.editor.toggle")
+	_editor_button.tooltip_text = T.t("gai_pi.editor.toggle_tooltip")
+	if _editor != null:
+		_editor.apply_locale()
 	_language_button.text = T.t("gai_pi.language.code")
 	_language_button.tooltip_text = T.t("gai_pi.topbar.language")
 	if _workspace_dialog != null:

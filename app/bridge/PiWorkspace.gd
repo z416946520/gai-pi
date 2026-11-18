@@ -32,6 +32,8 @@ var is_ready: bool = false
 var is_streaming: bool = false
 var model_label: String = StringUtils.EMPTY
 var thinking_level: String = StringUtils.EMPTY
+## Optional ownership of shell checkpoints, used to re-inject them when a session is replayed.
+var checkpoints: CheckpointManager = null
 
 var _launcher_path: String = StringUtils.EMPTY
 var _next_local_id: int = 1
@@ -263,6 +265,13 @@ func on_state(result: Dictionary) -> void:
 		load_entries()
 
 
+## Checkpoint metadata for a session, or an empty list when checkpoints are off.
+func checkpoint_records(session_id: String) -> Array[Dictionary]:
+	if checkpoints == null:
+		return []
+	return checkpoints.load_turn_records(session_id)
+
+
 ## Renders a session from its file; the model context still comes from pi.
 func load_session_file(session_path: String) -> void:
 	if session == null:
@@ -270,7 +279,7 @@ func load_session_file(session_path: String) -> void:
 	session.path = session_path
 	session.pi_id = PiSessionIndex.id_from_path(session_path)
 	var started := Time.get_ticks_msec()
-	session.rebuild(PiSessionIndex.load_branch_entries(session_path))
+	session.rebuild(PiSessionIndex.load_branch_entries(session_path), checkpoint_records(session.pi_id))
 	_needs_entries = false
 	timing("file_rebuild", started)
 	session_loaded.emit(session)
@@ -283,9 +292,12 @@ func load_entries() -> void:
 	var on_result := func(result: Dictionary) -> void:
 		if not bool(result.get("success", false)):
 			return
+		if session != null and session.running:
+			# A run started before the replay arrived: the live transcript is authoritative.
+			return
 		timing("get_entries", _entries_started_at)
 		var data := PiSession.as_dictionary(result.get("data", {}))
-		session.rebuild(PiSession.as_array(data.get("entries", [])))
+		session.rebuild(PiSession.as_array(data.get("entries", [])), checkpoint_records(session.pi_id))
 		timing("rebuild", _entries_started_at)
 		session_loaded.emit(session)
 	client.request("get_entries", {}, on_result, 120000)

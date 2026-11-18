@@ -302,7 +302,7 @@ func on_compaction_end(data: Dictionary) -> void:
 # ---------------------------------------------------------------------------
 
 ## Rebuilds the transcript from `get_entries` output (append order, active-branch agnostic).
-func rebuild(raw_entries: Array) -> void:
+func rebuild(raw_entries: Array, checkpoints: Array[Dictionary] = []) -> void:
 	_bulk = true
 	entries.clear()
 	_agent_entry = null
@@ -323,8 +323,30 @@ func rebuild(raw_entries: Array) -> void:
 				append_entry(summary)
 			_:
 				pass
+	for record in checkpoints:
+		insert_checkpoint_record(record)
 	_bulk = false
 	state_changed.emit()
+
+
+## Re-inserts a shell-owned checkpoint at the position its timestamp belongs to.
+func insert_checkpoint_record(record: Dictionary) -> void:
+	var entry := ChatEntry.new(ChatEntry.KIND_CHECKPOINT, ChatEntry.TITLE_CHECKPOINT, str(record.get("summary", StringUtils.EMPTY)))
+	entry.id = "checkpoint-%d" % int(record.get("turn", 0))
+	entry.timestamp = int(record.get("timestamp", 0))
+	entry.details["checkpoint"] = str(record.get("commit", StringUtils.EMPTY))
+	entry.details["turn"] = str(int(record.get("turn", 0)))
+	if bool(record.get("reverted", false)):
+		entry.details["reverted"] = "1"
+	var insert_at := entries.size()
+	for index in entries.size():
+		if entries[index].timestamp > 0 and entries[index].timestamp > entry.timestamp:
+			insert_at = index
+			break
+	entries.insert(insert_at, entry)
+	if OS.get_environment("GAI_PI_TIMING") == "1":
+		print("[ckpt] inject turn=", entry.details.get("turn"), " ts=", entry.timestamp,
+			" at=", insert_at, " first_ts=", entries[0].timestamp, " count=", entries.size())
 
 
 func rebuild_message(message: Dictionary) -> void:
@@ -335,6 +357,7 @@ func rebuild_message(message: Dictionary) -> void:
 			if not text.strip_edges().is_empty():
 				var entry := ChatEntry.new(ChatEntry.KIND_USER, ChatEntry.TITLE_USER, text)
 				entry.id = str(message.get("timestamp", ""))
+				entry.timestamp = int(message.get("timestamp", 0))
 				append_entry(entry)
 		"assistant":
 			var content: Variant = message.get("content", [])
@@ -379,6 +402,32 @@ func rebuild_message(message: Dictionary) -> void:
 # ---------------------------------------------------------------------------
 # Entry helpers
 # ---------------------------------------------------------------------------
+
+## Inserts the marker that represents one checkpointed turn.
+func add_checkpoint_entry(turn: int, commit: String) -> ChatEntry:
+	var entry := ChatEntry.new(ChatEntry.KIND_CHECKPOINT, ChatEntry.TITLE_CHECKPOINT, "")
+	entry.id = "checkpoint-%d" % turn
+	entry.details["checkpoint"] = commit
+	entry.details["turn"] = str(turn)
+	entry.running = true
+	append_entry(entry)
+	return entry
+
+
+func finish_checkpoint_entry(entry: ChatEntry, body: String) -> void:
+	if entry == null:
+		return
+	entry.running = false
+	entry.body = body
+	entry_updated.emit(entry, "content")
+
+
+func mark_checkpoint_reverted(entry: ChatEntry) -> void:
+	if entry == null:
+		return
+	entry.details["reverted"] = "1"
+	entry_updated.emit(entry, "content")
+
 
 func add_user_entry(text: String) -> void:
 	var entry := ChatEntry.new(ChatEntry.KIND_USER, ChatEntry.TITLE_USER, text)

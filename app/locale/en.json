@@ -555,7 +555,8 @@
       "more": "{} more lines",
       "collapse": "collapse",
       "session": "Session",
-      "expand_thinking": "Show thinking ({} lines)"
+      "expand_thinking": "Show thinking ({} lines)",
+      "checkpoint": "Checkpoint"
     },
     "status": {
       "switch_while_running": "Stop the running turn before switching sessions",
@@ -619,6 +620,33 @@
       "delete_title": "Delete this session?",
       "delete_message": "The session file is removed permanently.",
       "rename_placeholder": "Session name"
+    },
+    "checkpoint": {
+      "checkpoint": "Checkpoint",
+      "title": "Checkpoint",
+      "revert": "↶ Revert this turn",
+      "reverted": "reverted",
+      "no_changes": "no file changes",
+      "more_files": "… and {} more",
+      "git_missing": "Git is not installed; checkpoints are off",
+      "init_failed": "Could not create the checkpoint repository",
+      "revert_title": "Revert this turn?",
+      "revert_message": "Files changed in this turn go back to the state before it. Later edits are lost.",
+      "revert_failed": "Revert failed",
+      "revert_done": "Turn reverted",
+      "unavailable": "Checkpoints unavailable"
+    },
+    "editor": {
+      "toggle": "Files",
+      "toggle_tooltip": "Browse the workspace",
+      "title": "Workspace",
+      "refresh": "Reload the file tree",
+      "close": "Close the browser",
+      "reference": "Mention this file in the prompt",
+      "too_large": "File is too large to preview",
+      "unreadable": "Cannot read this file",
+      "empty": "Empty file",
+      "reference_short": "Mention"
     }
   }
 }

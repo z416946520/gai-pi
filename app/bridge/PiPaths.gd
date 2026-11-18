@@ -47,8 +47,8 @@ static func resolve(force: bool = false) -> bool:
 	node_bin = _first_existing([
 		AppSetting.get_string(AppSetting.KEY_PI_NODE),
 		OS.get_environment(ENV_NODE),
-		_which("node"),
-		_which("node.exe"),
+		which("node"),
+		which("node.exe"),
 	])
 	if node_bin.is_empty():
 		# An npm install next to the launcher usually ships its own node on Windows.
@@ -123,7 +123,7 @@ static func _first_existing(candidates: Array[String]) -> String:
 
 
 ## Finds an executable on PATH without shelling out.
-static func _which(binary: String) -> String:
+static func which(binary: String) -> String:
 	var path_var := OS.get_environment("PATH")
 	var separator := ";" if OSUtils.is_windows() else ":"
 	var extensions := PackedStringArray([StringUtils.EMPTY])

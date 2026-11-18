@@ -17,6 +17,7 @@ const KIND_RESULT := "result"
 const KIND_WEB := "web"
 const KIND_ERROR := "error"
 const KIND_COMPACTION := "compaction"
+const KIND_CHECKPOINT := "checkpoint"
 
 const TITLE_SYSTEM := "System"
 const TITLE_SKILL := "Skills"
@@ -29,6 +30,7 @@ const TITLE_RESULT := "Result"
 const TITLE_GIT_DIFF := "Git Diff"
 const TITLE_ERROR := "Error"
 const TITLE_COMPACTION := "Context Summary"
+const TITLE_CHECKPOINT := "Checkpoint"
 
 const DETAIL_CHECKPOINT := "checkpoint"
 const DETAIL_GIT_DIFF_PATCH := "git_diff_patch"
@@ -45,6 +47,8 @@ var tool_call_id: String = ""
 var is_error: bool = false
 ## True while a tool call or assistant block is still receiving data.
 var running: bool = false
+## Unix milliseconds when the source message was produced; 0 for shell-generated entries.
+var timestamp: int = 0
 
 
 ## Context entries are seeded into the LLM history (system, skills, memory, AGENTS.md, compaction summary) instead of a chat turn.
@@ -82,4 +86,5 @@ func deep_clone() -> ChatEntry:
 	cloned.tool_call_id = tool_call_id
 	cloned.is_error = is_error
 	cloned.running = running
+	cloned.timestamp = timestamp
 	return cloned

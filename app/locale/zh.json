@@ -555,7 +555,8 @@
       "more": "还有 {} 行",
       "collapse": "收起",
       "session": "会话",
-      "expand_thinking": "展开思考（{} 行）"
+      "expand_thinking": "展开思考（{} 行）",
+      "checkpoint": "检查点"
     },
     "status": {
       "switch_while_running": "先停止本轮运行，再切换会话",
@@ -619,6 +620,33 @@
       "delete_title": "删除这个会话？",
       "delete_message": "会话文件会被永久删除。",
       "rename_placeholder": "会话名称"
+    },
+    "checkpoint": {
+      "checkpoint": "检查点",
+      "title": "检查点",
+      "revert": "↶ 撤销本轮",
+      "reverted": "已回滚",
+      "no_changes": "没有文件改动",
+      "more_files": "… 还有 {} 个",
+      "git_missing": "没装 Git，检查点功能关闭",
+      "init_failed": "创建检查点仓库失败",
+      "revert_title": "回滚这一轮？",
+      "revert_message": "本轮改过的文件会回到本轮开始前的状态，之后的修改会丢失。",
+      "revert_failed": "回滚失败",
+      "revert_done": "已回滚本轮",
+      "unavailable": "检查点不可用"
+    },
+    "editor": {
+      "toggle": "文件",
+      "toggle_tooltip": "浏览工作目录",
+      "title": "工作目录",
+      "refresh": "刷新文件树",
+      "close": "关闭浏览器",
+      "reference": "在输入框里引用这个文件",
+      "too_large": "文件太大，不预览",
+      "unreadable": "读不了这个文件",
+      "empty": "空文件",
+      "reference_short": "引用"
     }
   }
 }

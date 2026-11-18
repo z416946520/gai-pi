@@ -252,7 +252,35 @@ pi 的 8 个内置工具与 gai 的 18 个不是一一对应，映射集中在 `
 3. **长内容降采样**：思考块默认只留标题（展开才解析 markdown）；助手正文默认截 80 行；
    侧栏元数据按 mtime+size 缓存；侧栏只在签名变化时重建；语言切换按 24 条/帧重排。
 
-## 九、已验证的事实（可复跑）
+## 九、检查点（整轮回滚）
+
+pi 没有检查点概念，用用户自己的仓库会往里塞 commit。gai-pi 的做法是**影子 Git 仓库**：
+
+- 仓库放在 `user://checkpoints/<workspace>-<hash>/`，每条命令都带
+  `--git-dir=<影子> --work-tree=<工作目录>`，用户的 `.git` 从不被写。
+- `.git/info/exclude` 排除 `.godot/`、`.dependency/`、`node_modules/`、`.verify/`、`build/`
+  等生成目录，快照只存源码量级的数据。
+- 每回合两枚提交：发消息前 `turn N start`，`agent_settled` 后 `turn N end`；
+  「本轮改了哪些文件」= 两个提交的 `diff --name-only`。
+- 回滚 = 先 `git add -A`（把本回合新文件纳入索引）再 `git reset --hard <start>`。
+  新增的文件被删掉、改过的文件回到原样，没动过的文件不受影响。
+- 检查点元数据（session / turn / commit / summary / timestamp / reverted）写在影子仓库旁的
+  `turns.json`：重放会话时按时间戳把「检查点」气泡插回正确位置，已回滚的保持「已回滚」。
+- Git 调用走 `AsyncProcess`（`OS.execute_with_pipe` + 帧循环轮询），`git add -A` 再慢也不冻界面。
+
+## 十、文件浏览器
+
+右上角「文件」打开右侧面板：
+
+- **文件树**：排除 `.git`/`.godot`/`.dependency`/`node_modules` 等目录与 `*.import`/`*.uid`，
+  最多 4000 个节点，超出截断。
+- **预览**：图片走 `Image`/`ImageTexture`；Markdown 走 gai 的 `MarkdownParser` 转 BBCode
+  （README 里的 HTML 标签先剥掉）；其余按文本用只读 `CodeEdit` 显示，超过 2MB 只给提示。
+- **引用**：点「引用」把 `@相对路径` 追加到输入框，交给 pi 的 `@path` 展开。
+
+只读是刻意的：写文件归 pi，外壳不跟它抢，避免同一份文件两个写入者。
+
+## 十一、已验证的事实（可复跑）
 
 ```bash
 # 1. GoDot 能驱动 pi 的 RPC（协议往返）
@@ -286,7 +314,7 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 
 ---
 
-## 十、边界与已知不足
+## 十二、边界与已知不足
 
 明确没做，避免误以为已经具备：
 
@@ -296,20 +324,19 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
   带 `timeout` 的请求到点自动按 `cancelled` 关闭（与 pi 的默认行为一致）。
 - **并发**：一个工作目录只有一个 pi 进程，所以同一项目的多个会话不能同时跑。
   跨项目可以（各开窗口/换工作目录）。
-- **检查点**：gai 的「每轮可回滚」还没接。pi 的 `fork/clone` 有，`edit` 自带 patch，
-  Git 检查点属于下一步。
-- **整轮检查点**：只有 `edit`/`write` 的单文件撤销（工具执行前把内容读进内存，气泡上给
-  「撤销」）；bash 改动的文件、以及"回滚整轮"还没有。
+- **检查点的范围**：影子仓库排除了生成目录，所以回滚不会恢复 `.godot/`、`node_modules/`
+  里的内容；`turns.json` 还没有清理策略。
 - **聊天记录搜索**：只做了会话级过滤，气泡内容搜索未做。
+- **编辑器**：只读预览，没有标签页、没有写操作、没有语法高亮。
 - **主题切换**：目前只有深色；`ThemeColor` 支持浅色，但界面没有入口。
 - **并发多会话**：一个工作目录一个 pi 进程，同时只能跑一个会话。
 - **附件/图片、粘贴截图**：未接。pi 的 `prompt` 支持 `images`，协议已就绪。
-- **编辑器面板、语音、资产技能面板、演练场（workflow）**：未移植。
+- **编辑器面板、语音、资产技能面板、演练场（workflow）**：只补了文件浏览与只读预览，其余未移植。
 - **审批/安全模式**：依赖扩展的 `confirm`，等第一项做完。
 
 ---
 
-## 十一、路线图（每步带验收）
+## 十三、路线图（每步带验收）
 
 1. **协议稳固**（已完成）：启动/握手/流式/工具/结算，`test/bridge_smoke.gd` 通过。
 2. **性能基线**（已完成）：切换 565 条会话 = pi 的 `switch_session` ~0.5s + 读文件重建
@@ -318,14 +345,14 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
    `extension_ui_response`；`notify` 进顶栏。验收：`GAI_PI_FAKE_DIALOG=confirm|select|input`
    起的假弹窗可渲染并回写（真扩展审批待补一个用例）。
 4. **会话管理**（大部分已完成）：搜索、置顶、重命名、删除已接；fork / 拖拽排序待做。
-5. **整轮回滚**：在单文件撤销之上加每轮快照，验收是"改三个文件后一键回到回合开始"。
+5. **检查点增强**（基础已完成）：`bash` 改动也在快照里；回滚后自动刷新编辑器预览。
 6. **图片输入**：粘贴/拖拽 → base64 → `prompt.images`。
-7. **编辑器面板**：文件树 + 只读预览 + diff 视图。
+7. **编辑器增强**（基础已完成）：标签页、语法高亮、diff 视图、写操作。
 8. **打包**：Godot 导出单文件 + 首启引导（检测 node / pi，给安装命令）。
 
 ---
 
-## 十二、目录
+## 十四、目录
 
 ```
 app/

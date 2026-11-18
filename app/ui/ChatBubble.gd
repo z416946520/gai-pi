@@ -11,6 +11,7 @@ signal expand_toggled
 signal copy_requested(entry: ChatEntry)
 signal prefill_requested(entry: ChatEntry)
 signal restore_requested(entry: ChatEntry)
+signal revert_requested(entry: ChatEntry)
 
 const COLLAPSED_LINES := 14
 const STREAMING_COLLAPSED_LINES := 80
@@ -32,6 +33,7 @@ var _expand_button: Button = null
 var _header: HBoxContainer = null
 var _actions: HBoxContainer = null
 var _restore_button: Button = null
+var _revert_button: Button = null
 var _hovered: bool = false
 
 
@@ -130,6 +132,17 @@ func _build() -> void:
 	_restore_button.pressed.connect(func() -> void: restore_requested.emit(entry))
 	column.add_child(_restore_button)
 
+	_revert_button = Button.new()
+	_revert_button.flat = true
+	_revert_button.focus_mode = FOCUS_NONE
+	_revert_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_revert_button.add_theme_font_override("font", Fonts.code())
+	_revert_button.add_theme_font_size_override("font_size", Typography.body_small - 1)
+	_revert_button.add_theme_color_override("font_color", Color("#ffd479"))
+	_revert_button.visible = false
+	_revert_button.pressed.connect(func() -> void: revert_requested.emit(entry))
+	column.add_child(_revert_button)
+
 	mouse_entered.connect(on_hover_changed.bind(true))
 	mouse_exited.connect(on_hover_changed.bind(false))
 
@@ -176,6 +189,13 @@ func rebuild_actions() -> void:
 		var can_restore := entry.details.has("restore") and not entry.details.has("restored")
 		_restore_button.visible = can_restore
 		_restore_button.text = T.t("gai_pi.chat.undo_edit")
+	if _revert_button != null:
+		var can_revert := entry.details.has("checkpoint") and not entry.details.has("reverted")
+		_revert_button.visible = can_revert
+		_revert_button.text = T.t("gai_pi.checkpoint.revert")
+		_revert_button.tooltip_text = str(entry.details.get("checkpoint", StringUtils.EMPTY))
+	if entry.kind == ChatEntry.KIND_CHECKPOINT:
+		_body.add_theme_font_override("normal_font", Fonts.code())
 	_actions.visible = _hovered and _actions.get_child_count() > 0
 
 
@@ -226,11 +246,15 @@ func localized_title() -> String:
 			return T.t("gai_pi.bubble.compaction")
 		ChatEntry.KIND_SYSTEM:
 			return T.t("gai_pi.bubble.system")
+		ChatEntry.KIND_CHECKPOINT:
+			return T.t("gai_pi.bubble.checkpoint")
 		_:
 			return StringUtils.EMPTY
 
 
 func meta_text() -> String:
+	if entry.details.has("reverted"):
+		return T.t("gai_pi.checkpoint.reverted")
 	if entry.details.has("restored"):
 		return T.t("gai_pi.chat.restored")
 	if entry.running:
@@ -331,7 +355,7 @@ static func accent_for_kind(kind: String) -> Color:
 			return Color("#b49bff")
 		ChatEntry.KIND_TOOL, ChatEntry.KIND_FILE_TOOL, ChatEntry.KIND_EXPLORER_TOOL, ChatEntry.KIND_WEB_TOOL:
 			return Color("#7fd4ff")
-		ChatEntry.KIND_COMPACTION:
+		ChatEntry.KIND_COMPACTION, ChatEntry.KIND_CHECKPOINT:
 			return Color("#ffd479")
 		_:
 			return ThemeColor.title_color
@@ -351,6 +375,8 @@ static func badge_for_kind(kind: String) -> String:
 			return "!"
 		ChatEntry.KIND_COMPACTION:
 			return "%"
+		ChatEntry.KIND_CHECKPOINT:
+			return "▣"
 		_:
 			return "*"
 
