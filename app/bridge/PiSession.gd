@@ -35,6 +35,10 @@ var _message_index: int = 0
 var _bulk: bool = false
 ## Pre-edit file contents keyed by tool call id, so a single edit can be undone.
 var _snapshots: Dictionary[String, Dictionary] = {}
+var _snapshot_order: Array[String] = []
+var _snapshot_bytes: int = 0
+## Old snapshots are dropped once the buffer grows past this, newest edits stay undoable.
+const MAX_SNAPSHOT_BYTES := 32 * 1024 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +480,13 @@ func capture_snapshot(tool_call_id: String, tool_name: String, args: Dictionary)
 	var content := file.get_as_text()
 	file.close()
 	_snapshots[tool_call_id] = {"path": path, "existed": true, "content": content}
+	_snapshot_order.append(tool_call_id)
+	_snapshot_bytes += content.length()
+	while _snapshot_bytes > MAX_SNAPSHOT_BYTES and _snapshot_order.size() > 1:
+		var oldest: String = _snapshot_order.pop_front()
+		var dropped: Dictionary = _snapshots.get(oldest, {})
+		_snapshot_bytes -= str(dropped.get("content", StringUtils.EMPTY)).length()
+		_snapshots.erase(oldest)
 
 
 func resolve_path(raw: String) -> String:

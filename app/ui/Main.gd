@@ -125,6 +125,7 @@ func _process(_delta: float) -> void:
 	if _preview_visual_at > 0 and now >= _preview_visual_at:
 		_preview_visual_at = 0
 		if _visual_stage != null:
+			_visuals_picker.selected = clampi(_preview_visual_type, 0, VisualStage.type_names().size() - 1)
 			_visual_stage.apply_visual_type(_preview_visual_type)
 	if _switch_locale_at > 0 and now >= _switch_locale_at:
 		_switch_locale_at = 0
