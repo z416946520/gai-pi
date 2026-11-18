@@ -210,6 +210,7 @@ func build_top_bar() -> Control:
 	_workspace_dialog.file_mode = FileDialog.FILE_MODE_OPEN_DIR
 	_workspace_dialog.access = FileDialog.ACCESS_FILESYSTEM
 	_workspace_dialog.title = "Choose workspace"
+	_workspace_dialog.use_native_dialog = true
 	_workspace_dialog.dir_selected.connect(on_workspace_selected)
 	add_child(_workspace_dialog)
 	return _top_bar
@@ -633,6 +634,9 @@ func on_stop_pressed() -> void:
 func on_new_session_pressed() -> void:
 	if workspace_host == null:
 		return
+	if workspace_host.is_streaming:
+		show_status("Stop the running turn before starting a new session")
+		return
 	clear_transcript()
 	workspace_host.new_session()
 	refresh_sessions()
@@ -673,7 +677,9 @@ func on_model_pressed() -> void:
 				workspace_host.set_model(labels[index])
 		)
 		add_child(menu)
-		menu.popup_on_parent(Rect2i(get_global_mouse_position(), Vector2i(1, 1)))
+		menu.popup_hide.connect(menu.queue_free)
+		menu.position = Vector2i(get_global_mouse_position())
+		menu.popup()
 	)
 
 
@@ -688,7 +694,9 @@ func on_thinking_pressed() -> void:
 			workspace_host.set_thinking_level(THINKING_LEVELS[index])
 	)
 	add_child(menu)
-	menu.popup_on_parent(Rect2i(get_global_mouse_position(), Vector2i(1, 1)))
+	menu.popup_hide.connect(menu.queue_free)
+	menu.position = Vector2i(get_global_mouse_position())
+	menu.popup()
 
 
 func on_streaming_changed(streaming: bool) -> void:
@@ -752,8 +760,12 @@ func build_session_row(meta: Dictionary, is_active: bool) -> Control:
 	button.add_theme_stylebox_override("hover", style)
 	button.add_theme_stylebox_override("pressed", style)
 	button.pressed.connect(func() -> void:
-		if workspace_host != null and not path.is_empty():
-			workspace_host.switch_session(path)
+		if workspace_host == null or path.is_empty():
+			return
+		if workspace_host.is_streaming:
+			show_status("Stop the running turn before switching sessions")
+			return
+		workspace_host.switch_session(path)
 	)
 
 	var column := VBoxContainer.new()
@@ -794,9 +806,12 @@ func build_session_row(meta: Dictionary, is_active: bool) -> Control:
 
 var _error_shown_at: int = 0
 var _error_text: String = StringUtils.EMPTY
+var _status_shown_at: int = 0
 
 
 func _poll_errors() -> void:
+	if _status_label != null and _status_label.visible and _status_shown_at > 0 and Time.get_ticks_msec() - _status_shown_at > 8000:
+		_status_label.visible = false
 	if _error_text.is_empty():
 		return
 	show_status(_error_text)
@@ -808,6 +823,7 @@ func show_status(message: String) -> void:
 		return
 	_status_label.text = message
 	_status_label.visible = not message.is_empty()
+	_status_shown_at = Time.get_ticks_msec()
 	if _sidebar_status != null and message.begins_with("pi "):
 		_sidebar_status.text = message
 

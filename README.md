@@ -15,6 +15,8 @@ GPU 绘制的界面、shader 动效、随工具调用起伏的 60 个场景）�
 └──────────────┴─────────────────────────────────────────────────────┘
 ```
 
+![内联 diff、思考、工具气泡](docs/screenshot-edit.png)
+
 ## 为什么这么做
 
 - **pi 负责大脑**：循环、工具、会话、压缩、模型、skills、扩展，全在 pi 里，
@@ -36,7 +38,7 @@ gai-pi 不安装、不修改 pi。它读 `PI_CODING_AGENT_DIR`（默认 `~/.pi/a
 ## 运行
 
 ```bash
-# 普通窗口
+# 双击 gai-pi.cmd，或：
 .dependency/godot/Godot_v4.6.3-stable_win64_console.exe --path .
 
 # 无窗口自检：启动 pi → 握手 → 发一句话 → 等结算
@@ -71,6 +73,7 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 | `GAI_PI_SCREENSHOT` / `GAI_PI_SCREENSHOT_DELAY` | 到点截图并退出 |
 | `GAI_PI_SMOKE_PROMPT=0` | 只验证启动，不调用模型 |
 | `GAI_PI_NODE` / `GAI_PI_CLI` | 覆盖 node / pi bundle 路径 |
+| `GAI_PI_SESSION` | 启动后打开指定会话（uuid 或 jsonl 路径） |
 
 ## 现在能做什么，不能做什么
 
