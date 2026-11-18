@@ -531,7 +531,10 @@
       "empty": "No sessions yet",
       "starting": "starting pi…",
       "loading": "Loading {} entries…",
-      "switching": "Switching session…"
+      "switching": "Switching session…",
+      "today": "Today",
+      "yesterday": "Yesterday",
+      "earlier": "Earlier"
     },
     "composer": {
       "placeholder": "Ask pi to read, change, or verify something…",
@@ -677,6 +680,11 @@
       "save_failed": "Could not save",
       "empty": "No AGENTS.md, MEMORY.md, SYSTEM.md, SKILLS.md or .memory/*.md in this workspace",
       "hint": "pi reads these at session start; a running session keeps its current context."
+    },
+    "time": {
+      "just_now": "now",
+      "yesterday": "yesterday",
+      "days_ago": "{}d"
     }
   }
 }

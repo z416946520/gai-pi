@@ -431,12 +431,20 @@ func build_sidebar() -> Control:
 
 	_new_session_button = Button.new()
 	_new_session_button.text = T.t("gai_pi.sidebar.new")
-	if _session_search != null:
-		_session_search.placeholder_text = T.t("gai_pi.session.search_placeholder")
 	_new_session_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_new_session_button.focus_mode = FOCUS_NONE
+	_new_session_button.custom_minimum_size = Vector2(0, 32)
 	_new_session_button.add_theme_font_override("font", Fonts.medium())
 	_new_session_button.add_theme_font_size_override("font_size", Typography.body_medium)
-	_new_session_button.custom_minimum_size = Vector2(0, 36)
+	_new_session_button.add_theme_color_override("font_color", ThemeColor.theme_color)
+	_new_session_button.add_theme_color_override("font_hover_color", ThemeColor.theme_color)
+	for state: String in ["normal", "hover", "pressed"]:
+		var new_style := StyleBoxFlat.new()
+		new_style.bg_color = Color(0, 0, 0, 0) if state == "normal" else ThemeColor.mix_with_theme_color(AppTheme.control_surface(), 0.4)
+		new_style.set_corner_radius_all(8)
+		new_style.content_margin_left = Margin.ma_2
+		new_style.content_margin_right = Margin.ma_2
+		_new_session_button.add_theme_stylebox_override(state, new_style)
 	_new_session_button.pressed.connect(on_new_session_pressed)
 	column.add_child(_new_session_button)
 
@@ -1595,10 +1603,15 @@ func refresh_sessions(force: bool = false) -> void:
 		add_session_header(T.t("gai_pi.session.pinned"))
 		for meta in pinned_rows:
 			_session_list.add_child(build_session_row(meta, str(meta.get("path", "")) == active_path, true))
-	if not recent_rows.is_empty():
-		if not pinned_rows.is_empty():
-			add_session_header(T.t("gai_pi.session.recent"))
-		for meta in recent_rows:
+	var buckets := {"today": [], "yesterday": [], "earlier": []}
+	for meta in recent_rows:
+		buckets[day_bucket(int(meta.get("modified", 0)))].append(meta)
+	for bucket: Array in [["today", "gai_pi.sidebar.today"], ["yesterday", "gai_pi.sidebar.yesterday"], ["earlier", "gai_pi.sidebar.earlier"]]:
+		var rows: Array = buckets[bucket[0]]
+		if rows.is_empty():
+			continue
+		add_session_header(T.t(bucket[1]))
+		for meta in rows:
 			_session_list.add_child(build_session_row(meta, str(meta.get("path", "")) == active_path, false))
 	if pinned_rows.is_empty() and recent_rows.is_empty():
 		var empty := Label.new()
@@ -1637,21 +1650,23 @@ func style_sidebar_field(control: LineEdit) -> void:
 
 func build_session_row(meta: Dictionary, is_active: bool, pinned: bool = false) -> Control:
 	var path := str(meta.get("path", StringUtils.EMPTY))
+	var modified := int(meta.get("modified", 0))
+	var raw_title := str(meta.get("title", StringUtils.EMPTY))
+	var title_text := raw_title if not raw_title.is_empty() else T.t("gai_pi.sidebar.untitled")
+	var preview_text := str(meta.get("preview", StringUtils.EMPTY))
+	var host: PiWorkspace = _hosts.get(path)
+	var running := host != null and host.is_streaming
+
 	var button := Button.new()
 	button.flat = true
 	button.focus_mode = FOCUS_NONE
-	button.custom_minimum_size = Vector2(0, 48)
-	button.tooltip_text = str(meta.get("preview", StringUtils.EMPTY))
+	button.custom_minimum_size = Vector2(0, 52)
 	button.size_flags_horizontal = SIZE_EXPAND_FILL
 	button.mouse_filter = MOUSE_FILTER_STOP
-	var style := StyleBoxFlat.new()
-	style.bg_color = ThemeColor.mix_with_theme_color(AppTheme.control_surface(), 0.35) if is_active else Color(0, 0, 0, 0)
-	style.set_corner_radius_all(8)
-	style.content_margin_left = Margin.ma_2
-	style.content_margin_right = Margin.ma_2
-	button.add_theme_stylebox_override("normal", style)
-	button.add_theme_stylebox_override("hover", style)
-	button.add_theme_stylebox_override("pressed", style)
+	button.tooltip_text = "%s\n%s\n%s" % [title_text, preview_text, session_time_label(modified)]
+	button.add_theme_stylebox_override("normal", row_style(is_active, false))
+	button.add_theme_stylebox_override("hover", row_style(is_active, true))
+	button.add_theme_stylebox_override("pressed", row_style(is_active, true))
 	button.pressed.connect(func() -> void:
 		if path.is_empty():
 			return
@@ -1666,45 +1681,110 @@ func build_session_row(meta: Dictionary, is_active: bool, pinned: bool = false) 
 	var column := VBoxContainer.new()
 	column.set_anchors_preset(PRESET_FULL_RECT)
 	column.offset_left = Margin.ma_2
-	column.offset_right = -Margin.ma_2
+	column.offset_right = -Margin.ma_1
 	column.offset_top = Margin.ma_1
 	column.offset_bottom = -Margin.ma_1
 	column.mouse_filter = MOUSE_FILTER_IGNORE
-	column.add_theme_constant_override("separation", 0)
+	column.add_theme_constant_override("separation", 1)
 	button.add_child(column)
 
+	var title_row := HBoxContainer.new()
+	title_row.add_theme_constant_override("separation", Margin.ma_1)
+	title_row.mouse_filter = MOUSE_FILTER_IGNORE
+	column.add_child(title_row)
+
 	var title := Label.new()
-	var raw_title := str(meta.get("title", StringUtils.EMPTY))
-	title.text = raw_title if not raw_title.is_empty() else T.t("gai_pi.sidebar.untitled")
-	var host: PiWorkspace = _hosts.get(path)
-	if host != null and host.is_streaming:
-		title.text = "● " + title.text
-		title.add_theme_color_override("font_color", ThemeColor.theme_color)
+	title.text = ("● " if running else "") + title_text
+	title.size_flags_horizontal = SIZE_EXPAND_FILL
 	title.clip_text = true
 	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	title.add_theme_font_override("font", Fonts.medium())
+	title.add_theme_font_override("font", Fonts.semibold() if is_active or pinned else Fonts.medium())
 	title.add_theme_font_size_override("font_size", Typography.body_medium)
-	title.add_theme_color_override("font_color", ThemeColor.theme_color if pinned else (ThemeColor.title_color if is_active else ThemeColor.body_color))
+	var title_color := ThemeColor.body_color
+	if running:
+		title_color = ThemeColor.theme_color
+	elif is_active:
+		title_color = ThemeColor.title_color
+	elif pinned:
+		title_color = ThemeColor.theme_color
+	title.add_theme_color_override("font_color", title_color)
 	title.mouse_filter = MOUSE_FILTER_IGNORE
-	column.add_child(title)
+	title_row.add_child(title)
 
-	var preview := Label.new()
-	preview.text = str(meta.get("preview", StringUtils.EMPTY))
-	preview.clip_text = true
-	preview.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	preview.add_theme_font_override("font", Fonts.code())
-	preview.add_theme_font_size_override("font_size", Typography.body_small - 2)
-	preview.add_theme_color_override("font_color", ThemeColor.body_color.darkened(0.25))
-	preview.mouse_filter = MOUSE_FILTER_IGNORE
-	column.add_child(preview)
+	var time_label := Label.new()
+	time_label.text = session_time_label(modified)
+	time_label.add_theme_font_override("font", Fonts.code())
+	time_label.add_theme_font_size_override("font_size", Typography.body_small - 2)
+	time_label.add_theme_color_override("font_color", ThemeColor.body_color.darkened(0.2))
+	time_label.mouse_filter = MOUSE_FILTER_IGNORE
+	title_row.add_child(time_label)
+
+	if not preview_text.is_empty() and preview_text != title_text:
+		var preview := Label.new()
+		preview.text = preview_text
+		preview.clip_text = true
+		preview.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		preview.add_theme_font_override("font", Fonts.regular())
+		preview.add_theme_font_size_override("font_size", Typography.body_small - 1)
+		preview.add_theme_color_override("font_color", ThemeColor.body_color.darkened(0.22))
+		preview.mouse_filter = MOUSE_FILTER_IGNORE
+		column.add_child(preview)
 	return button
 
 
-# ---------------------------------------------------------------------------
-# Checkpoints
-# ---------------------------------------------------------------------------
+## Row chrome: an accent bar marks the active session, hover is a quiet tint.
+func row_style(active: bool, hovered: bool) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	if active:
+		style.bg_color = ThemeColor.mix_with_theme_color(AppTheme.control_surface(), 0.4)
+	elif hovered:
+		style.bg_color = ThemeColor.mix_with_theme_color(AppTheme.control_surface(), 0.22)
+	else:
+		style.bg_color = Color(0, 0, 0, 0)
+	style.set_corner_radius_all(8)
+	style.content_margin_left = Margin.ma_2
+	style.content_margin_right = Margin.ma_2
+	if active:
+		style.border_width_left = 3
+		style.border_color = ThemeColor.theme_color
+	return style
 
-## Opens a checkpoint before a fresh turn; steering messages stay inside the same turn.
+
+## "today" / "yesterday" / "earlier", compared by local date.
+func day_bucket(modified: int) -> String:
+	var now := int(Time.get_unix_time_from_system())
+	if modified <= 0:
+		return "earlier"
+	if local_date(modified) == local_date(now):
+		return "today"
+	if local_date(modified) == local_date(now - 86400):
+		return "yesterday"
+	return "earlier"
+
+
+func local_date(unix_seconds: int) -> String:
+	var parts := Time.get_datetime_dict_from_unix_time(unix_seconds)
+	return "%04d-%02d-%02d" % [int(parts["year"]), int(parts["month"]), int(parts["day"])]
+
+
+func session_time_label(modified: int) -> String:
+	if modified <= 0:
+		return StringUtils.EMPTY
+	var now := int(Time.get_unix_time_from_system())
+	var delta := now - modified
+	if delta < 60:
+		return T.t("gai_pi.time.just_now")
+	var parts := Time.get_datetime_dict_from_unix_time(modified)
+	if local_date(modified) == local_date(now):
+		return "%02d:%02d" % [int(parts["hour"]), int(parts["minute"])]
+	if local_date(modified) == local_date(now - 86400):
+		return T.t("gai_pi.time.yesterday")
+	var days := int(float(delta) / 86400.0)
+	if days < 7:
+		return T.t("gai_pi.time.days_ago", [days])
+	return "%02d-%02d" % [int(parts["month"]), int(parts["day"])]
+
+
 func begin_checkpoint() -> void:
 	if _checkpoints == null or not _checkpoints.enabled or session == null:
 		return

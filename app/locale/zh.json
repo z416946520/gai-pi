@@ -531,7 +531,10 @@
       "empty": "还没有会话",
       "starting": "正在启动 pi…",
       "loading": "正在载入 {} 条…",
-      "switching": "正在切换会话…"
+      "switching": "正在切换会话…",
+      "today": "今天",
+      "yesterday": "昨天",
+      "earlier": "更早"
     },
     "composer": {
       "placeholder": "让 pi 读代码、改代码，或者跑一遍验证…",
@@ -677,6 +680,11 @@
       "save_failed": "保存失败",
       "empty": "这个工作目录里没有 AGENTS.md、MEMORY.md、SYSTEM.md、SKILLS.md 或 .memory/*.md",
       "hint": "pi 在会话开始时读取这些文件；正在运行的会话仍用旧上下文。"
+    },
+    "time": {
+      "just_now": "刚刚",
+      "yesterday": "昨天",
+      "days_ago": "{} 天前"
     }
   }
 }
