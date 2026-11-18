@@ -651,6 +651,13 @@
       "unreadable": "读不了这个文件",
       "empty": "空文件",
       "reference_short": "引用"
+    },
+    "search": {
+      "button": "搜索聊天记录（Ctrl+F）",
+      "placeholder": "搜索本会话…",
+      "no_results": "没有匹配",
+      "results": "{} 处匹配",
+      "tool": "工具"
     }
   }
 }

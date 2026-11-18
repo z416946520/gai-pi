@@ -214,6 +214,19 @@ func action_button(glyph: String, tooltip: String, action: Callable) -> Button:
 	return button
 
 
+## Briefly outlines the bubble so a search jump is visible.
+func flash() -> void:
+	var style := get_theme_stylebox("panel") as StyleBoxFlat
+	if style == null:
+		return
+	style.border_color = ThemeColor.theme_color
+	style.set_border_width_all(2)
+	modulate = Color(1.35, 1.5, 1.42)
+	var tween := create_tween()
+	tween.tween_property(self, "modulate", Color.WHITE, 1.1)
+	tween.tween_callback(refresh)
+
+
 func on_hover_changed(hovered: bool) -> void:
 	_hovered = hovered
 	if _actions != null:

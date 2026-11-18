@@ -60,6 +60,15 @@ var _workspace_dialog: FileDialog = null
 var _language_button: Button = null
 var _editor_button: Button = null
 var _theme_button: Button = null
+var _search_button: Button = null
+var _search_panel: PanelContainer = null
+var _search_field: LineEdit = null
+var _search_results: VBoxContainer = null
+var _search_status: Label = null
+var _search_env_at: int = 0
+var _search_env_query: String = StringUtils.EMPTY
+## Lowercased bodies, keyed by entry; cleared whenever the transcript is replaced.
+var _search_lower: Dictionary = {}
 var _editor: EditorPanel = null
 var _attachments: Array[Dictionary] = []
 var _attachment_row: HBoxContainer = null
@@ -146,6 +155,10 @@ func _ready() -> void:
 	if not switch_env.is_empty():
 		_switch_locale_code = switch_env
 		_switch_locale_at = _started_at + 2500
+	var search_env := OS.get_environment("GAI_PI_SEARCH").strip_edges()
+	if not search_env.is_empty():
+		_search_env_at = _started_at + 6000
+		_search_env_query = search_env
 	var switch_theme := OS.get_environment("GAI_PI_SWITCH_THEME").strip_edges()
 	if not switch_theme.is_empty():
 		var delay := 2500
@@ -168,6 +181,15 @@ func _process(_delta: float) -> void:
 	if not _build_queue.is_empty():
 		build_next_batch()
 	watch_scroll_extent()
+	if _search_env_at > 0 and now >= _search_env_at:
+		_search_env_at = 0
+		toggle_search(true)
+		_search_field.text = _search_env_query
+		run_search(_search_env_query)
+		if OS.get_environment("GAI_PI_SEARCH_JUMP") == "1" and session != null:
+			var matches := ChatSearch.find_matches(session.entries, _search_env_query)
+			if not matches.is_empty():
+				reveal_entry(matches[0]["entry"])
 	if _switch_theme_at > 0 and now >= _switch_theme_at:
 		_switch_theme_at = 0
 		ThemeColor.toggle_theme()
@@ -312,6 +334,10 @@ func build_top_bar() -> Control:
 	_editor_button.pressed.connect(func() -> void: toggle_editor(not _editor.visible))
 	row.add_child(_editor_button)
 
+	_search_button = make_flat_button("⌕", "")
+	_search_button.pressed.connect(func() -> void: toggle_search(not (_search_panel != null and _search_panel.visible)))
+	row.add_child(_search_button)
+
 	_theme_button = make_flat_button("", "")
 	_theme_button.pressed.connect(func() -> void: ThemeColor.toggle_theme())
 	row.add_child(_theme_button)
@@ -454,6 +480,83 @@ func build_chat_area() -> Control:
 	_load_earlier_button.add_theme_stylebox_override("pressed", pill)
 	_load_earlier_button.pressed.connect(on_load_earlier_pressed)
 	area.add_child(_load_earlier_button)
+
+	_search_panel = PanelContainer.new()
+	_search_panel.anchor_left = 1.0
+	_search_panel.anchor_right = 1.0
+	_search_panel.offset_left = -Margin.ma_8 - 480
+	_search_panel.offset_right = -Margin.ma_8
+	_search_panel.offset_top = Margin.ma_4
+	_search_panel.offset_bottom = Margin.ma_4
+	_search_panel.custom_minimum_size = Vector2(480, 0)
+	_search_panel.visible = false
+	var search_style := StyleBoxFlat.new()
+	search_style.bg_color = AppTheme.container_surface()
+	search_style.border_color = ThemeColor.theme_color
+	search_style.set_border_width_all(1)
+	search_style.set_corner_radius_all(10)
+	search_style.content_margin_left = Margin.ma_3
+	search_style.content_margin_right = Margin.ma_3
+	search_style.content_margin_top = Margin.ma_2
+	search_style.content_margin_bottom = Margin.ma_2
+	_search_panel.add_theme_stylebox_override("panel", search_style)
+	area.add_child(_search_panel)
+
+	var search_column := VBoxContainer.new()
+	search_column.add_theme_constant_override("separation", Margin.ma_1)
+	_search_panel.add_child(search_column)
+
+	var search_row := HBoxContainer.new()
+	search_row.add_theme_constant_override("separation", Margin.ma_2)
+	search_column.add_child(search_row)
+
+	_search_field = LineEdit.new()
+	_search_field.size_flags_horizontal = SIZE_EXPAND_FILL
+	_search_field.custom_minimum_size = Vector2(0, 30)
+	_search_field.clear_button_enabled = true
+	_search_field.add_theme_font_override("font", Fonts.regular())
+	_search_field.add_theme_font_size_override("font_size", Typography.body_small)
+	_search_field.add_theme_color_override("font_color", ThemeColor.title_color)
+	_search_field.add_theme_color_override("font_placeholder_color", ThemeColor.body_color.darkened(0.15))
+	_search_field.add_theme_color_override("caret_color", ThemeColor.theme_color)
+	for state: String in ["normal", "focus", "read_only"]:
+		var field_style := StyleBoxFlat.new()
+		field_style.bg_color = AppTheme.control_surface()
+		field_style.border_color = ThemeColor.theme_color if state == "focus" else AppTheme.outline()
+		field_style.set_border_width_all(1)
+		field_style.set_corner_radius_all(8)
+		field_style.content_margin_left = Margin.ma_2
+		field_style.content_margin_right = Margin.ma_2
+		_search_field.add_theme_stylebox_override(state, field_style)
+	_search_field.text_changed.connect(func(text: String) -> void: run_search(text))
+	_search_field.text_submitted.connect(func(_text: String) -> void: focus_first_result())
+	search_row.add_child(_search_field)
+
+	var search_close := Button.new()
+	search_close.text = "✕"
+	search_close.flat = true
+	search_close.focus_mode = FOCUS_NONE
+	search_close.custom_minimum_size = Vector2(26, 24)
+	search_close.add_theme_font_override("font", Fonts.code())
+	search_close.add_theme_color_override("font_color", ThemeColor.body_color)
+	search_close.pressed.connect(func() -> void: toggle_search(false))
+	search_row.add_child(search_close)
+
+	_search_status = Label.new()
+	_search_status.add_theme_font_override("font", Fonts.code())
+	_search_status.add_theme_font_size_override("font_size", Typography.body_small - 1)
+	_search_status.add_theme_color_override("font_color", ThemeColor.body_color)
+	search_column.add_child(_search_status)
+
+	var search_scroll := ScrollContainer.new()
+	search_scroll.custom_minimum_size = Vector2(0, 280)
+	search_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	search_column.add_child(search_scroll)
+
+	_search_results = VBoxContainer.new()
+	_search_results.size_flags_horizontal = SIZE_EXPAND_FILL
+	_search_results.add_theme_constant_override("separation", 4)
+	search_scroll.add_child(_search_results)
 
 	_runtime_strip = PanelContainer.new()
 	_runtime_strip.anchor_left = 0.0
@@ -730,6 +833,19 @@ func on_session_loaded(loaded: PiSession) -> void:
 		remove_session_file(stale)
 
 
+## Builds an explicit slice, used when a search hit is outside the tail window.
+func start_transcript_window(from: int, to: int) -> void:
+	if session == null:
+		return
+	clear_transcript()
+	_build_generation += 1
+	_window_start = clampi(from, 0, session.entries.size())
+	_build_queue = session.entries.slice(_window_start, clampi(to, _window_start, session.entries.size()))
+	_build_started_at = Time.get_ticks_msec()
+	update_load_earlier()
+	build_next_batch()
+
+
 ## Replays a session across frames; the interface stays responsive while hundreds of
 ## markdown bubbles are being laid out.
 func start_transcript_build(entries: Array[ChatEntry]) -> void:
@@ -878,6 +994,7 @@ func flush_bubbles() -> void:
 
 
 func clear_transcript() -> void:
+	_search_lower.clear()
 	for bubble in _bubbles.values():
 		if is_instance_valid(bubble):
 			bubble.queue_free()
@@ -982,6 +1099,15 @@ func on_submit() -> void:
 func _input(event: InputEvent) -> void:
 	var key := event as InputEventKey
 	if key == null or not key.pressed or key.echo:
+		return
+	if key.keycode == KEY_F and key.ctrl_pressed and not key.alt_pressed:
+		if _search_panel != null and not (_prompt != null and _prompt.visible):
+			get_viewport().set_input_as_handled()
+			toggle_search(not _search_panel.visible)
+		return
+	if key.keycode == KEY_ESCAPE and _search_panel != null and _search_panel.visible:
+		get_viewport().set_input_as_handled()
+		toggle_search(false)
 		return
 	if _prompt != null and _prompt.visible:
 		return
@@ -1449,6 +1575,98 @@ func on_revert_entry(entry: ChatEntry) -> void:
 
 
 # ---------------------------------------------------------------------------
+# Transcript search
+# ---------------------------------------------------------------------------
+
+func toggle_search(show_search: bool) -> void:
+	if _search_panel == null:
+		return
+	_search_panel.visible = show_search
+	if not show_search:
+		return
+	_search_field.grab_focus()
+	run_search(_search_field.text)
+
+
+func focus_first_result() -> void:
+	_search_field.release_focus()
+	if _search_results.get_child_count() > 0:
+		var first := _search_results.get_child(0) as Button
+		if first != null:
+			first.pressed.emit()
+
+
+func run_search(query: String) -> void:
+	if _search_results == null or session == null:
+		return
+	for child in _search_results.get_children():
+		child.queue_free()
+	if query.strip_edges().is_empty():
+		_search_status.text = StringUtils.EMPTY
+		return
+	var matches := ChatSearch.find_matches(session.entries, query, ChatSearch.MAX_RESULTS, _search_lower)
+	_search_status.text = T.t("gai_pi.search.no_results") if matches.is_empty() else T.t("gai_pi.search.results", [matches.size()])
+	for match in matches:
+		var entry: ChatEntry = match["entry"]
+		var row := Button.new()
+		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		row.clip_text = true
+		row.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		row.custom_minimum_size = Vector2(0, 30)
+		row.text = "%s · %s" % [ChatSearch.kind_label(str(match["kind"])), str(match["snippet"])]
+		row.add_theme_font_override("font", Fonts.regular())
+		row.add_theme_font_size_override("font_size", Typography.body_small)
+		row.add_theme_color_override("font_color", ThemeColor.title_color)
+		row.add_theme_color_override("font_hover_color", ThemeColor.theme_color)
+		for state: String in ["normal", "hover", "pressed"]:
+			var row_style := StyleBoxFlat.new()
+			row_style.bg_color = Color(0, 0, 0, 0) if state == "normal" else ThemeColor.mix_with_theme_color(AppTheme.control_surface(), 0.35)
+			row_style.set_corner_radius_all(6)
+			row_style.content_margin_left = Margin.ma_2
+			row_style.content_margin_right = Margin.ma_2
+			row.add_theme_stylebox_override(state, row_style)
+		row.tooltip_text = entry.body
+		row.pressed.connect(func() -> void: reveal_entry(entry))
+		_search_results.add_child(row)
+
+
+## Jumps to a search hit: rebuilds the window around it when it is older than the tail.
+func reveal_entry(entry: ChatEntry) -> void:
+	toggle_search(false)
+	if session == null:
+		return
+	var index := session.entries.find(entry)
+	if index < 0:
+		return
+	if not _bubbles.has(entry):
+		# A hit far back gets a window around itself instead of just the tail.
+		var from := maxi(0, index - 8)
+		start_transcript_window(from, from + TRANSCRIPT_WINDOW)
+		var guard := 0
+		while not _build_queue.is_empty() and guard < 900:
+			guard += 1
+			await get_tree().process_frame
+	var bubble: ChatBubble = _bubbles.get(entry)
+	if bubble == null:
+		return
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_follow_tail = false
+	scroll_to_bubble(bubble)
+	bubble.flash()
+
+
+func scroll_to_bubble(bubble: Control) -> void:
+	if _scroll == null:
+		return
+	var offset := bubble.global_position.y - _scroll.global_position.y
+	var target := _scroll.scroll_vertical + int(offset) - int(_scroll.size.y * 0.3)
+	_programmatic_scroll = true
+	_scroll.scroll_vertical = maxi(0, target)
+	_programmatic_scroll = false
+
+
+# ---------------------------------------------------------------------------
 # Theme
 # ---------------------------------------------------------------------------
 
@@ -1680,6 +1898,9 @@ func apply_locale() -> void:
 	_visuals_picker.tooltip_text = T.t("gai_pi.topbar.visual")
 	_editor_button.text = T.t("gai_pi.editor.toggle")
 	_editor_button.tooltip_text = T.t("gai_pi.editor.toggle_tooltip")
+	_search_button.tooltip_text = T.t("gai_pi.search.button")
+	if _search_field != null:
+		_search_field.placeholder_text = T.t("gai_pi.search.placeholder")
 	_theme_button.text = "☀" if AppTheme.is_dark() else "☾"
 	_theme_button.tooltip_text = T.t("gai_pi.topbar.toggle_light") if AppTheme.is_dark() else T.t("gai_pi.topbar.toggle_dark")
 	if _editor != null:

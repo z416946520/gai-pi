@@ -75,6 +75,7 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 | 浏览工作目录 | 右上角「文件」：文件树 + 文本/Markdown/图片预览，`引用` 把 `@路径` 塞进输入框 |
 | 贴图 | 输入框里 `Ctrl+V` 粘贴截图，或把图片拖到窗口上；发送前可移除 |
 | 看扩展状态 | 输入框上方的细条：`setStatus` 一行汇总，`setWidget` 最多 4 行 |
+| 搜索聊天记录 | `Ctrl+F` 或右上角 `⌕`，点结果跳转并高亮 |
 | 选模型 / thinking | 右上角 |
 | 切换界面语言 | 右上角 `中` / `EN`，立即生效并记住 |
 | 切换主题 | 右上角 `☀` / `☾`，深色与浅色互换并记住 |
@@ -97,6 +98,7 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 | `GAI_PI_LOCALE` | 强制界面语言（`zh` / `en`），用于截图与验收 |
 | `GAI_PI_SWITCH_LOCALE` | 启动 2.5 秒后自动切到另一种语言，用于验证热切换 |
 | `GAI_PI_THEME` / `GAI_PI_SWITCH_THEME` | 强制深/浅色；后者在指定秒数后切一次，用于验证主题重建 |
+| `GAI_PI_SEARCH` / `GAI_PI_SEARCH_JUMP` | 启动后自动打开搜索并填入关键词；JUMP=1 时自动跳第一条结果 |
 
 ## 现在能做什么，不能做什么
 
@@ -104,11 +106,11 @@ GAI_PI_VISUAL=4 GAI_PI_SCREENSHOT=.verify/run.png GAI_PI_SCREENSHOT_DELAY=45000 
 steer 队列、会话搜索/置顶/重命名/删除、模型与 thinking 切换、上下文压缩事件、扩展弹窗
 （`confirm`/`select`/`input`/`editor`）与 `notify`、扩展状态条与挂件、单文件修改撤销、
 每轮检查点与整轮回滚（影子 Git，不碰用户仓库）、文件浏览器（树 + 文本/Markdown/图片预览 + `@引用`）、
-图片粘贴与拖拽、深色/浅色主题切换、60 个视觉场景（切换即预览）、多工作目录、
+图片粘贴与拖拽、深色/浅色主题切换、聊天记录搜索（跳转+高亮）、60 个视觉场景（切换即预览）、多工作目录、
 中英双语与运行时切换、便携打包。
 
-未完成（详见 [ARCHITECTURE.md](ARCHITECTURE.md#十五边界与已知不足)）：同项目并发会话、
-聊天记录内容搜索、编辑器写操作、导出为单文件 exe。
+未完成（详见 [ARCHITECTURE.md](ARCHITECTURE.md#十六边界与已知不足)）：同项目并发会话、
+编辑器写操作与标签页、导出为单文件 exe。
 
 ## 打包
 

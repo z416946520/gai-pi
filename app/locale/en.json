@@ -651,6 +651,13 @@
       "unreadable": "Cannot read this file",
       "empty": "Empty file",
       "reference_short": "Mention"
+    },
+    "search": {
+      "button": "Search this chat (Ctrl+F)",
+      "placeholder": "Search this session…",
+      "no_results": "No matches",
+      "results": "{} matches",
+      "tool": "Tool"
     }
   }
 }
